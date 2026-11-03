@@ -48,12 +48,27 @@ class DroneAndRhythmTest {
     }
 
     @Test fun strokesLandOnTheirSteps() {
-        val metronome = Iqaat.all.first { it.name == "Метроном" }
-        val pcm = Drum.render(metronome, 120, sampleRate)
-        val step = metronome.stepSamples(120, sampleRate)
+        val maqsum = Iqaat.all.first { it.name == "Максум" }
+        val pcm = Drum.render(maqsum, 120, sampleRate)
+        val step = maqsum.stepSamples(120, sampleRate)
         fun loudness(from: Int) = (from until from + step / 4).maxOf { abs(pcm[it].toInt()) }
-        // "D . T . T . T .": sound right after steps 0, 2, 4, 6; the rests (1, 3, …) start quieter.
-        assertTrue(loudness(0) > 3 * loudness(step * 3 + step / 2))
-        assertTrue(loudness(2 * step) > loudness(step * 3 + step / 2))
+        // "D T . T D . T .": strokes start loud on their steps; a rest only carries a fading tail.
+        assertTrue(loudness(step) > 2 * loudness(2 * step + step / 2))
+        assertTrue(loudness(3 * step) > 2 * loudness(2 * step + step / 2))
+    }
+
+    @Test fun metronomeBarIsBeatsTimesSubdivisionClicks() {
+        // 3 beats of triplets at 60 bpm: three seconds, a click every third of a second.
+        assertEquals(3 * sampleRate, Metronome.render(60, 3, 3, accent = true, sampleRate = sampleRate).size)
+        assertEquals(sampleRate / 3, Metronome.clickSamples(60, 3, sampleRate))
+    }
+
+    @Test fun metronomeAccentIsLouderThanOtherBeats() {
+        val pcm = Metronome.render(120, 4, 1, accent = true, sampleRate = sampleRate)
+        val beat = Metronome.clickSamples(120, 1, sampleRate)
+        fun peak(from: Int) = (from until from + beat / 4).maxOf { abs(pcm[it].toInt()) }
+        assertTrue(peak(0) > peak(beat))
+        val flat = Metronome.render(120, 4, 1, accent = false, sampleRate = sampleRate)
+        assertEquals((0 until beat / 4).maxOf { abs(flat[it].toInt()) }, peak(beat))
     }
 }
