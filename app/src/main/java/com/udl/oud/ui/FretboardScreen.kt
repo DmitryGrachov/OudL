@@ -5,6 +5,7 @@ package com.udl.oud.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -17,14 +18,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -78,6 +82,8 @@ import com.udl.oud.fretboard.Position
 import com.udl.oud.fretboard.ScaleNote
 import com.udl.oud.fretboard.intervalLabel
 import com.udl.oud.tuner.Note
+import com.udl.oud.tuner.OudSettings
+import com.udl.oud.tuner.OudType
 import com.udl.oud.ui.theme.InTuneGreen
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -111,6 +117,10 @@ private fun BoardRoute(mode: BoardMode) {
     val vm: FretboardViewModel = viewModel(key = mode.name)
     val mic = rememberMicPermission()
     val state by vm.state.collectAsStateWithLifecycle()
+    if (mode == BoardMode.Maqamat && state.oud == OudType.Turkish) {
+        TurkishMaqamatLater()
+        return
+    }
     if (mode.choices.isNotEmpty() && state.selected == null) {
         LaunchedEffect(Unit) { vm.select(mode.choices.first()) }
     }
@@ -268,15 +278,22 @@ private fun Options(state: FretboardUiState, vm: FretboardViewModel, scaleMode: 
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
-        listOf(NoteLabels.Solfege to "До-Ре-Ми", NoteLabels.Latin to "C-D-E", NoteLabels.Arabic to "Арабские")
-            .forEach { (labels, title) ->
-                FilterChip(state.labels == labels, onClick = { vm.setLabels(labels) }, label = { Text(title) })
-            }
+        // Arabic names and quarter tones are Arabic theory; the Turkish oud doesn't get them.
+        val arabic = state.oud == OudType.Arabic
+        listOfNotNull(
+            NoteLabels.Solfege to "До-Ре-Ми",
+            NoteLabels.Latin to "C-D-E",
+            (NoteLabels.Arabic to "Арабские").takeIf { arabic },
+        ).forEach { (labels, title) ->
+            FilterChip(state.labels == labels, onClick = { vm.setLabels(labels) }, label = { Text(title) })
+        }
         Text("·", Modifier.align(Alignment.CenterVertically), color = MaterialTheme.colorScheme.outline)
         // A scale decides by itself which notes are shown, so the note layers only make sense without one.
         if (!scaleMode) {
             FilterChip(state.showAccidentals, onClick = vm::toggleAccidentals, label = { Text("♯ ♭") })
-            FilterChip(state.showQuarterTones, onClick = vm::toggleQuarterTones, label = { Text("Четвертитоны") })
+            if (arabic) {
+                FilterChip(state.showQuarterTones, onClick = vm::toggleQuarterTones, label = { Text("Четвертитоны") })
+            }
         }
         FilterChip(state.showFingers, onClick = vm::toggleFingers, label = { Text("Пальцы") })
         FilterChip(!state.bassOnTop, onClick = vm::flip, label = { Text("Бас снизу") })
@@ -887,6 +904,43 @@ private fun SayrPanel(state: FretboardUiState, vm: FretboardViewModel, maqam: Ma
                     TextButton(onClick = { vm.playCadence(cadence) }) { Text("▶") }
                     TextButton(onClick = { vm.startCadenceDrill(cadence) }) { Text("🎯") }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * The maqam tab on a Turkish oud: Turkish makams sit on a koma grid (a ninth of a tone) that the
+ * Arabic quarter-tone maqamat can't stand in for, so rather than show wrong intonation the tab
+ * says so and offers the way back.
+ */
+@Composable
+private fun TurkishMaqamatLater() {
+    // A Surface gives the text the theme's content colour; outside one it would default to black.
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        TurkishMaqamatLaterText()
+    }
+}
+
+@Composable
+private fun TurkishMaqamatLaterText() {
+    Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 640.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text("Турецкие макамы — позже", style = MaterialTheme.typography.headlineSmall)
+            Text(
+                "В турецкой теории тон делится не на четверти, а на 9 комм, и ступени вроде Segâh или Eviç " +
+                    "стоят не там, где арабские четвертитоны. Показывать турецкие макамы на арабской сетке " +
+                    "значило бы учить неправильной интонации, поэтому этот раздел появится, когда будет " +
+                    "своя система комм.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "Тюнер, гриф, гаммы, дрон и метроном работают и с турецким удом.",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            FilledTonalButton(onClick = { OudSettings.setOud(OudType.Arabic) }) {
+                Text("Переключиться на арабский уд")
             }
         }
     }

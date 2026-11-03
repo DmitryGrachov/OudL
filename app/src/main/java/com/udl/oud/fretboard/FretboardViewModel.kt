@@ -10,6 +10,7 @@ import com.udl.oud.audio.PitchReading
 import com.udl.oud.audio.PitchTracker
 import com.udl.oud.audio.ReferenceTone
 import com.udl.oud.tuner.OudSettings
+import com.udl.oud.tuner.OudType
 import com.udl.oud.tuner.Tuning
 import com.udl.oud.tuner.centsBetween
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +28,7 @@ import kotlin.math.abs
 data class SayrStop(val scale: Scale, val tonic: Int)
 
 data class FretboardUiState(
+    val oud: OudType = OudSettings.oud.value,
     val tuning: Tuning = OudSettings.tuning.value,
     val a4: Int = OudSettings.a4.value,
     val labels: NoteLabels = NoteLabels.Solfege,
@@ -118,8 +120,20 @@ class FretboardViewModel : ViewModel() {
 
     init {
         viewModelScope.launch {
-            combine(OudSettings.tuning, OudSettings.a4) { tuning, a4 -> tuning to a4 }.collect { (tuning, a4) ->
-                _state.update { it.copy(tuning = tuning, a4 = a4, onlyCourse = null) }
+            combine(OudSettings.oud, OudSettings.tuning, OudSettings.a4, ::Triple).collect { (oud, tuning, a4) ->
+                _state.update {
+                    // Arabic note names and quarter tones belong to Arabic theory; the Turkish
+                    // oud gets semitones until its own koma-based system is in.
+                    val turkish = oud == OudType.Turkish
+                    it.copy(
+                        oud = oud,
+                        tuning = tuning,
+                        a4 = a4,
+                        onlyCourse = if (tuning == it.tuning) it.onlyCourse else null,
+                        labels = if (turkish && it.labels == NoteLabels.Arabic) NoteLabels.Solfege else it.labels,
+                        showQuarterTones = it.showQuarterTones && !turkish,
+                    )
+                }
             }
         }
     }

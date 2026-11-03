@@ -46,6 +46,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.udl.oud.tuner.Note
+import com.udl.oud.tuner.OudType
 import com.udl.oud.tuner.Tuning
 import com.udl.oud.tuner.Tunings
 import com.udl.oud.tuner.TunerMode
@@ -76,6 +77,7 @@ fun TunerRoute(vm: TunerViewModel = viewModel()) {
         hasPermission = mic.granted,
         onRequestPermission = mic.request,
         actions = TunerActions(
+            onSelectOud = vm::selectOud,
             onSelectTuning = vm::selectTuning,
             onSetMode = vm::setMode,
             onAuto = vm::setAuto,
@@ -87,6 +89,7 @@ fun TunerRoute(vm: TunerViewModel = viewModel()) {
 }
 
 class TunerActions(
+    val onSelectOud: (OudType) -> Unit,
     val onSelectTuning: (Tuning) -> Unit,
     val onSetMode: (TunerMode) -> Unit,
     val onAuto: () -> Unit,
@@ -111,7 +114,11 @@ fun TunerScreen(
                 // Tablet / landscape: gauge on the left, controls on the right.
                 Row(Modifier.fillMaxSize().padding(24.dp), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
                     Readout(state, Modifier.weight(1f).align(Alignment.CenterVertically))
-                    Controls(state, actions, Modifier.weight(1f).align(Alignment.CenterVertically))
+                    // Scrolls when the controls outgrow a landscape tablet.
+                    Controls(
+                        state, actions,
+                        Modifier.weight(1f).align(Alignment.CenterVertically).verticalScroll(rememberScrollState()),
+                    )
                 }
             } else {
                 Column(
@@ -277,7 +284,7 @@ private fun Controls(
     modifier: Modifier = Modifier,
 ) {
     val courseMode = state.mode == TunerMode.Course
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Режим", style = MaterialTheme.typography.labelLarge)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
@@ -292,9 +299,20 @@ private fun Controls(
             )
         }
 
+        Text("Уд", style = MaterialTheme.typography.labelLarge)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OudType.entries.forEach { oud ->
+                FilterChip(
+                    selected = oud == state.oud,
+                    onClick = { actions.onSelectOud(oud) },
+                    label = { Text(oud.title) },
+                )
+            }
+        }
+
         Text("Строй", style = MaterialTheme.typography.labelLarge)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Tunings.all.forEach { tuning ->
+            Tunings.forOud(state.oud).forEach { tuning ->
                 FilterChip(
                     selected = tuning == state.tuning,
                     onClick = { actions.onSelectTuning(tuning) },

@@ -46,10 +46,29 @@ data class Tuning(val name: String, val courses: List<Note>) {
     }
 }
 
+/** The two oud traditions the app knows: they differ in tunings and, later, in maqam theory. */
+enum class OudType(val title: String) {
+    Arabic("Арабский"),
+    Turkish("Турецкий"),
+}
+
 object Tunings {
-    val all = listOf(
+    val arabic = listOf(
         Tuning("До-До", listOf(Note(36), Note(41), Note(45), Note(50), Note(55), Note(60))), // C2 F2 A2 D3 G3 C4
         Tuning("Ре-До", listOf(Note(38), Note(43), Note(45), Note(50), Note(55), Note(60))), // D2 G2 A2 D3 G3 C4
         Tuning("Фа-Фа", listOf(Note(41), Note(45), Note(50), Note(55), Note(60), Note(65))), // F2 A2 D3 G3 C4 F4
     )
+
+    /** Sounding pitches of the usual Turkish tunings, not the transposed Turkish notation. */
+    val turkish = listOf(
+        Tuning("До♯-Ре", listOf(Note(37), Note(42), Note(47), Note(52), Note(57), Note(62))), // C♯2 F♯2 B2 E3 A3 D4
+        Tuning("Ре-Ре", listOf(Note(38), Note(42), Note(47), Note(52), Note(57), Note(62))), // D2 F♯2 B2 E3 A3 D4
+    )
+
+    val all = arabic + turkish
+
+    fun forOud(oud: OudType): List<Tuning> = when (oud) {
+        OudType.Arabic -> arabic
+        OudType.Turkish -> turkish
+    }
 }

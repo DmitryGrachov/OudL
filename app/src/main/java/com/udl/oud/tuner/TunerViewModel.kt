@@ -14,6 +14,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -27,6 +28,7 @@ enum class TunerMode {
 }
 
 data class TunerUiState(
+    val oud: OudType = OudType.Arabic,
     val tuning: Tuning = Tunings.all.first(),
     val a4: Int = 440,
     val mode: TunerMode = TunerMode.Tuning,
@@ -75,7 +77,7 @@ data class TunerUiState(
 
 class TunerViewModel : ViewModel() {
     private val _state = MutableStateFlow(
-        TunerUiState(tuning = OudSettings.tuning.value, a4 = OudSettings.a4.value),
+        TunerUiState(oud = OudSettings.oud.value, tuning = OudSettings.tuning.value, a4 = OudSettings.a4.value),
     )
     val state = _state.asStateFlow()
 
@@ -90,6 +92,20 @@ class TunerViewModel : ViewModel() {
 
     /** Course mode: the first string still rings after capture, so wait for a fresh pluck. */
     private var awaitingSecondPluck = false
+
+    init {
+        // The shared settings are the source of truth; a new tuning starts the course check over.
+        viewModelScope.launch {
+            combine(OudSettings.oud, OudSettings.tuning, OudSettings.a4, ::Triple).collect { (oud, tuning, a4) ->
+                val tuningChanged = tuning != _state.value.tuning
+                _state.update { it.copy(oud = oud, tuning = tuning, a4 = a4) }
+                if (tuningChanged) {
+                    _state.update { it.copy(lockedCourse = if (it.mode == TunerMode.Course) 0 else null) }
+                    restartCourse()
+                }
+            }
+        }
+    }
 
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     fun start() {
@@ -107,21 +123,13 @@ class TunerViewModel : ViewModel() {
         listenJob = null
     }
 
-    fun selectTuning(tuning: Tuning) {
-        OudSettings.tuning.value = tuning
-        _state.update {
-            it.copy(tuning = tuning, lockedCourse = if (it.mode == TunerMode.Course) 0 else null)
-        }
-        restartCourse()
-    }
+    fun selectOud(oud: OudType) = OudSettings.setOud(oud)
+
+    fun selectTuning(tuning: Tuning) = OudSettings.setTuning(tuning)
 
     fun setAuto() = _state.update { it.copy(lockedCourse = null) }
 
-    fun changeA4(delta: Int) {
-        val a4 = (_state.value.a4 + delta).coerceIn(A4_MIN, A4_MAX)
-        OudSettings.a4.value = a4
-        _state.update { it.copy(a4 = a4) }
-    }
+    fun changeA4(delta: Int) = OudSettings.setA4((_state.value.a4 + delta).coerceIn(A4_MIN, A4_MAX))
 
     fun setMode(mode: TunerMode) {
         _state.update {
