@@ -11,6 +11,7 @@ import com.udl.oud.audio.PitchTracker
 import com.udl.oud.audio.ReferenceTone
 import com.udl.oud.tuner.OudSettings
 import com.udl.oud.tuner.Tuning
+import com.udl.oud.tuner.centsBetween
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 data class FretboardUiState(
     val tuning: Tuning = OudSettings.tuning.value,
@@ -44,9 +46,19 @@ data class FretboardUiState(
     val descending: Boolean = false,
     /** Grid pitch the app is sounding right now (a tapped note or a scale), to light it up. */
     val playingStep: Int? = null,
+    /** "Play the scale" drill in progress or just finished; null when not drilling. */
+    val exercise: ScaleExercise? = null,
     val frequency: Double? = null,
     val error: String? = null,
 ) {
+    /** How far the heard note is from the note the drill asks for. */
+    val exerciseCents: Double?
+        get() {
+            val target = exercise?.target ?: return null
+            val f = frequency ?: return null
+            return centsBetween(f, Pitch(target).frequency(a4.toDouble()))
+        }
+
     val maxCents: Int
         get() = if (extended) Fretboard.EXTENDED_CENTS else Fretboard.NECK_CENTS
 
@@ -92,6 +104,8 @@ class FretboardViewModel : ViewModel() {
     private var scaleJob: Job? = null
     @Volatile private var playRun = 0
     private var ignoreMicUntil = 0L
+    private val steady = SteadyNote()
+    private var awaitingPluck = false
 
     init {
         viewModelScope.launch {
@@ -127,23 +141,42 @@ class FretboardViewModel : ViewModel() {
     fun toggleExtended() = _state.update { it.copy(extended = !it.extended) }
     fun setOnlyCourse(course: Int?) = _state.update { it.copy(onlyCourse = course) }
 
-    fun select(scale: Scale?) =
-        _state.update { it.copy(selected = scale, tonic = scale?.tonic ?: 0, descending = false) }
+    // Changing the scale, tonic or direction ends a drill: its notes no longer match.
 
-    fun setDescending(descending: Boolean) = _state.update { it.copy(descending = descending) }
+    fun select(scale: Scale?) = _state.update {
+        it.copy(selected = scale, tonic = scale?.tonic ?: 0, descending = false, exercise = null)
+    }
+
+    fun setDescending(descending: Boolean) = _state.update { it.copy(descending = descending, exercise = null) }
 
     /** Moves the scale to another tonic, [semitones] up or down. */
     fun shiftTonic(semitones: Int) = _state.update {
-        it.copy(tonic = (it.tonic + semitones * 2).coerceIn(TONIC_MIN, TONIC_MAX))
+        it.copy(tonic = (it.tonic + semitones * 2).coerceIn(TONIC_MIN, TONIC_MAX), exercise = null)
+    }
+
+    /** Tonic to octave, or octave down to tonic in the descending form, as grid pitches. */
+    private fun scaleSteps(s: FretboardUiState): List<Int>? {
+        val notes = s.selectedNotes ?: return null
+        val up = notes.map { s.tonic + it.offset } + (s.tonic + 24)
+        return if (s.descending) up.reversed() else up
     }
 
     /** Plays the scale from tonic to octave, or from the octave down in its descending form. */
     fun playScale() {
-        val s = _state.value
-        val notes = s.selectedNotes ?: return
-        val up = notes.map { s.tonic + it.offset } + (s.tonic + 24)
-        playSequence(if (s.descending) up.reversed() else up, SCALE_NOTE_MS, SCALE_TONE_MS)
+        val steps = scaleSteps(_state.value) ?: return
+        _state.update { it.copy(exercise = null) }
+        playSequence(steps, SCALE_NOTE_MS, SCALE_TONE_MS)
     }
+
+    /** Starts the "play the scale" drill in the current direction; it needs the mic, so turns it on. */
+    fun startExercise() {
+        val steps = scaleSteps(_state.value) ?: return
+        steady.reset()
+        awaitingPluck = false
+        _state.update { it.copy(exercise = ScaleExercise(steps), live = true) }
+    }
+
+    fun stopExercise() = _state.update { it.copy(exercise = null) }
 
     /**
      * Plays grid pitches one after another, [noteMs] apart, each ringing for [toneMs], and marks
@@ -185,13 +218,34 @@ class FretboardViewModel : ViewModel() {
         val now = SystemClock.elapsedRealtime()
         if (now < ignoreMicUntil) return
         val s = _state.value
+        val targetFrequency = s.exercise?.target?.let { Pitch(it).frequency(s.a4.toDouble()) }
         val update = tracker.update(reading, now) {
-            Fretboard.resolveOctave(
-                s.tuning, it.frequency.toDouble(), it.canBeOctaveLower, s.a4.toDouble(), s.onlyCourse, s.maxCents,
-            )
+            val f = it.frequency.toDouble()
+            if (targetFrequency != null) {
+                // The drill knows which note is due, so the octave question has a sure answer.
+                if (it.canBeOctaveLower && abs(centsBetween(f / 2, targetFrequency)) < abs(centsBetween(f, targetFrequency))) {
+                    f / 2
+                } else {
+                    f
+                }
+            } else {
+                Fretboard.resolveOctave(s.tuning, f, it.canBeOctaveLower, s.a4.toDouble(), s.onlyCourse, s.maxCents)
+            }
         }
         if (update.lost) _state.update { it.copy(frequency = null) }
         update.frequency?.let { f -> _state.update { it.copy(frequency = f) } }
+
+        if (update.pluck) {
+            awaitingPluck = false
+            steady.reset()
+        }
+        // After a note is taken it keeps ringing; only a new pluck may count for the next one.
+        if (targetFrequency == null || awaitingPluck) return
+        val f = update.steady ?: return
+        steady.add(centsBetween(f, targetFrequency))?.let { cents ->
+            _state.update { it.copy(exercise = it.exercise?.record(cents)) }
+            awaitingPluck = true
+        }
     }
 
     override fun onCleared() {

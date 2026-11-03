@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -70,6 +71,7 @@ import com.udl.oud.tuner.Note
 import com.udl.oud.ui.theme.InTuneGreen
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 
 /** What a board tab shows: all notes, or one scale at a time picked from [choices]. */
 private enum class BoardMode(val title: String, val choices: List<Scale>) {
@@ -123,7 +125,11 @@ private fun FretboardScreen(
         // On tablets the navigation rail already names the screen; the board needs the height.
         Scaffold(topBar = { if (!wide) TopAppBar(title = { Text(mode.title) }) }) { padding ->
             val content: @Composable (Modifier) -> Unit = { boardModifier ->
-                HeardBar(state, needsMic, onRequestMic, vm::setLive)
+                if (state.exercise != null) {
+                    ExercisePanel(state, vm, needsMic, onRequestMic)
+                } else {
+                    HeardBar(state, needsMic, onRequestMic, vm::setLive)
+                }
                 if (scaleMode) ScaleBar(state, vm, mode.choices)
                 Options(state, vm, scaleMode)
                 FretboardCanvas(state, onTap = vm::play, modifier = boardModifier)
@@ -350,9 +356,11 @@ private fun FretboardCanvas(state: FretboardUiState, onTap: (Position) -> Unit, 
         val geometry = BoardGeometry(size, state.tuning.courses.size, state.bassOnTop, state.maxCents, this)
         drawBoard(geometry, colors, measurer)
         positions.forEach { p ->
-            // What the app is playing lights up just like what the mic hears, in its own colour.
+            // What the app plays, or the note the drill asks for, lights up just like what the
+            // mic hears, in its own colour.
             val highlight = when {
                 p.pitch.step == state.playingStep -> colors.playing
+                p.pitch.step == state.exercise?.target -> colors.playing
                 p in heardPositions -> colors.heard
                 else -> null
             }
@@ -541,6 +549,7 @@ private fun ScaleBar(state: FretboardUiState, vm: FretboardViewModel, choices: L
                 Spacer(Modifier.width(8.dp))
                 FilterChip(state.descending, onClick = { vm.setDescending(true) }, label = { Text("↓ вниз") })
                 TextButton(onClick = vm::playScale) { Text("▶ Сыграть") }
+                TextButton(onClick = vm::startExercise) { Text("🎯 Упражнение") }
             }
             Text(
                 buildAnnotatedString {
@@ -600,4 +609,103 @@ private fun ScaleSummary(state: FretboardUiState) {
         style = MaterialTheme.typography.titleMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/**
+ * The "play the scale" drill: which note is due and how the current one sounds, the notes
+ * done so far with their offsets, and a summary at the end.
+ */
+@Composable
+private fun ExercisePanel(
+    state: FretboardUiState,
+    vm: FretboardViewModel,
+    needsMic: Boolean,
+    onRequestMic: () -> Unit,
+) {
+    val exercise = state.exercise ?: return
+    val degrees = state.degrees
+    fun name(step: Int) = state.labelFor(Pitch(step), degrees)
+    val good = InTuneGreen
+    val off = MaterialTheme.colorScheme.tertiary
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    fun colorFor(cents: Double) = if (abs(cents) <= FretboardUiState.IN_TUNE_CENTS) good else off
+
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                val target = exercise.target
+                when {
+                    needsMic -> Text(
+                        "Для упражнения нужен микрофон — нажми, чтобы разрешить",
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.pointerInput(Unit) { detectTapGestures { onRequestMic() } },
+                    )
+                    target == null -> {
+                        val worst = exercise.worst
+                        Text(
+                            "Готово: ${exercise.inTuneCount} из ${exercise.steps.size} точно" +
+                                " · средняя ошибка ${exercise.meanError.roundToInt()} ц" +
+                                (worst?.let { " · хуже всего ${name(exercise.steps[it])} ${signedCents(exercise.results[it])}" } ?: ""),
+                            style = MaterialTheme.typography.titleLarge,
+                        )
+                    }
+                    else -> {
+                        Text(
+                            "Нота ${exercise.results.size + 1} из ${exercise.steps.size}:  ",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = muted,
+                        )
+                        Text(
+                            "сыграй ${name(target)}",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        val cents = state.exerciseCents
+                        val frequency = state.frequency
+                        if (cents != null && frequency != null) {
+                            val heardName = state.labelFor(
+                                Pitch.nearest(frequency, state.a4.toDouble(), state.snapToQuarterTones),
+                                degrees,
+                            )
+                            Text(
+                                when {
+                                    abs(cents) > 50 -> "   слышу $heardName — другая нота"
+                                    abs(cents) <= FretboardUiState.IN_TUNE_CENTS -> "   ${signedCents(cents)} — держи"
+                                    cents < 0 -> "   низко на ${abs(cents).roundToInt()} ц"
+                                    else -> "   высоко на ${cents.roundToInt()} ц"
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                                color = if (abs(cents) > 50) muted else colorFor(cents),
+                            )
+                        }
+                    }
+                }
+            }
+            TextButton(onClick = vm::startExercise) { Text(if (exercise.done) "Ещё раз" else "Заново") }
+            TextButton(onClick = vm::stopExercise) { Text("Закончить") }
+        }
+        Text(
+            buildAnnotatedString {
+                exercise.steps.forEachIndexed { i, step ->
+                    val result = exercise.results.getOrNull(i)
+                    val style = when {
+                        result != null -> SpanStyle(color = colorFor(result), fontWeight = FontWeight.SemiBold)
+                        i == exercise.results.size -> SpanStyle(
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            background = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        else -> SpanStyle(color = muted)
+                    }
+                    withStyle(style) {
+                        append(" ${name(step)}")
+                        if (result != null) append(" ${signedCents(result)}")
+                        append(" ")
+                    }
+                    if (i < exercise.steps.lastIndex) withStyle(SpanStyle(color = muted)) { append(" · ") }
+                }
+            },
+            style = MaterialTheme.typography.titleMedium,
+        )
+    }
 }
