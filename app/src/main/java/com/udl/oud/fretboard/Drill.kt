@@ -14,6 +14,8 @@ data class Drill(
     val results: List<Double> = emptyList(),
     /** For a fretboard drill, the spot on the neck asked for with each step. */
     val places: List<Position>? = null,
+    /** For a cadence drill, the phrase being repeated. */
+    val cadence: Cadence? = null,
 ) {
     val target: Int? get() = steps.getOrNull(results.size)
     val targetPlace: Position? get() = places?.getOrNull(results.size)

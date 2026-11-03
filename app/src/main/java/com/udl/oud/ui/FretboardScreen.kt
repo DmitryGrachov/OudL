@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.udl.oud.fretboard.Cadences
 import com.udl.oud.fretboard.Fretboard
 import com.udl.oud.fretboard.FretboardUiState
 import com.udl.oud.fretboard.FretboardViewModel
@@ -866,6 +867,25 @@ private fun SayrPanel(state: FretboardUiState, vm: FretboardViewModel, maqam: Ma
                         onClick = { vm.modulate(target, tonic) },
                         label = { Text("→ ${target.name} на ${Spelling.of(tonic).label(NoteLabels.Solfege)}") },
                     )
+                }
+            }
+        }
+        val cadences = Cadences.of(maqam)
+        if (cadences.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Кадансы:", Modifier.align(Alignment.CenterVertically).padding(end = 4.dp), color = muted)
+                cadences.forEach { cadence ->
+                    val phrase = cadence.steps(maqam, state.tonic).joinToString(" ") { state.labelFor(Pitch(it), degrees) }
+                    Text(
+                        buildAnnotatedString {
+                            withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(cadence.name) }
+                            withStyle(SpanStyle(color = muted)) { append("  $phrase") }
+                        },
+                        Modifier.align(Alignment.CenterVertically).padding(start = 8.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    TextButton(onClick = { vm.playCadence(cadence) }) { Text("▶") }
+                    TextButton(onClick = { vm.startCadenceDrill(cadence) }) { Text("🎯") }
                 }
             }
         }

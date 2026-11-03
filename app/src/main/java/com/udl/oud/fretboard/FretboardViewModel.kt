@@ -217,9 +217,30 @@ class FretboardViewModel : ViewModel() {
         beginDrill(Drill.onFretboard(choices))
     }
 
+    /** Plays a cadence of the selected maqam with its rhythm, lighting each note as it sounds. */
+    fun playCadence(cadence: Cadence) {
+        val s = _state.value
+        val maqam = s.selected as? Maqam ?: return
+        _state.update { it.copy(exercise = null) }
+        val beatMs = 60_000.0 / CADENCE_BPM
+        playTimed(cadence.steps(maqam, s.tonic), cadence.notes.map { (it.beats * beatMs).toLong() })
+    }
+
+    /** "Repeat the cadence": the same drill as for a scale, note by note through the phrase. */
+    fun startCadenceDrill(cadence: Cadence) {
+        val s = _state.value
+        val maqam = s.selected as? Maqam ?: return
+        beginDrill(Drill(cadence.steps(maqam, s.tonic), cadence = cadence))
+    }
+
     /** Runs the same kind of drill again from the start. */
     fun restartExercise() {
-        if (_state.value.exercise?.places != null) startFretboardDrill() else startExercise()
+        val drill = _state.value.exercise
+        when {
+            drill?.cadence != null -> startCadenceDrill(drill.cadence)
+            drill?.places != null -> startFretboardDrill()
+            else -> startExercise()
+        }
     }
 
     /** Drills need the mic, so starting one turns it on. */
@@ -237,10 +258,18 @@ class FretboardViewModel : ViewModel() {
      * Plays grid pitches one after another, [noteMs] apart, each ringing for [toneMs], and marks
      * the one sounding in [FretboardUiState.playingStep] so the board can light it up.
      */
-    private fun playSequence(steps: List<Int>, noteMs: Long, toneMs: Long) {
+    private fun playSequence(steps: List<Int>, noteMs: Long, toneMs: Long) =
+        playTimed(steps, List(steps.size) { noteMs }, toneMs)
+
+    /**
+     * Like [playSequence] with a length per note: note i lasts [noteMs]`[i]`. Unless [toneMs] is
+     * given, each tone rings a little past its length so a phrase sounds joined up.
+     */
+    private fun playTimed(steps: List<Int>, noteMs: List<Long>, toneMs: Long? = null) {
         val a4 = _state.value.a4.toDouble()
+        val rings = noteMs.map { toneMs ?: (it * 1.4).toLong().coerceAtLeast(MIN_TONE_MS) }
         // Don't light up the speaker's own tone as if it were played on the oud.
-        ignoreMicUntil = SystemClock.elapsedRealtime() + steps.size * noteMs + toneMs
+        ignoreMicUntil = SystemClock.elapsedRealtime() + noteMs.sum() + rings.last()
         tracker.reset()
         _state.update { it.copy(frequency = null) }
         scaleJob?.cancel()
@@ -248,10 +277,10 @@ class FretboardViewModel : ViewModel() {
         val run = ++playRun
         scaleJob = viewModelScope.launch(Dispatchers.Default) {
             try {
-                steps.forEach { step ->
+                steps.forEachIndexed { i, step ->
                     _state.update { it.copy(playingStep = step) }
-                    tone.play(Pitch(step).frequency(a4), toneMs.toInt())
-                    delay(noteMs)
+                    tone.play(Pitch(step).frequency(a4), rings[i].toInt())
+                    delay(noteMs[i])
                 }
                 delay(HIGHLIGHT_TAIL_MS)
             } finally {
@@ -314,5 +343,7 @@ class FretboardViewModel : ViewModel() {
         const val SCALE_TONE_MS = 900L
         const val SINGLE_NOTE_MS = 900L
         const val HIGHLIGHT_TAIL_MS = 300L
+        const val CADENCE_BPM = 80
+        const val MIN_TONE_MS = 400L
     }
 }
