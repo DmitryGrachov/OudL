@@ -26,6 +26,12 @@ private val DarkColors = darkColorScheme(
     surfaceVariant = Color(0xFF3A2C22),
     onSurfaceVariant = Color(0xFFCDBBA8),
     outline = Color(0xFF8D7A68),
+    // Cards and other containers: warmer steps up from the background instead of Material grey.
+    surfaceContainerLowest = Color(0xFF180F0A),
+    surfaceContainerLow = Color(0xFF261B14),
+    surfaceContainer = Color(0xFF2B1F17),
+    surfaceContainerHigh = Color(0xFF33261C),
+    surfaceContainerHighest = Color(0xFF3B2D22),
 )
 
 private val LightColors = lightColorScheme(
@@ -45,6 +51,11 @@ private val LightColors = lightColorScheme(
     surfaceVariant = Color(0xFFF0E1D0),
     onSurfaceVariant = Color(0xFF52443A),
     outline = Color(0xFF85746A),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFFCF2E7),
+    surfaceContainer = Color(0xFFF7EBDD),
+    surfaceContainerHigh = Color(0xFFF2E4D4),
+    surfaceContainerHighest = Color(0xFFECDDCB),
 )
 
 @Composable

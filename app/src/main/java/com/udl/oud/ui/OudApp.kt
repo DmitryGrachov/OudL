@@ -24,6 +24,7 @@ private enum class Destination(val title: String, val glyph: String) {
     Fretboard("Гриф", "≡"),
     Maqamat("Макамы", "♮"),
     Scales("Гаммы", "♯"),
+    Practice("Практика", "◉"), // drone and rhythm; the full name doesn't fit the rail
 }
 
 /** Top-level screens: a side rail on tablets, a bottom bar on phones. */
@@ -36,6 +37,7 @@ fun OudApp() {
             Destination.Fretboard -> FretboardRoute()
             Destination.Maqamat -> MaqamRoute()
             Destination.Scales -> WesternScaleRoute()
+            Destination.Practice -> PracticeRoute()
         }
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
