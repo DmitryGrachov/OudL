@@ -46,8 +46,10 @@ data class FretboardUiState(
     val descending: Boolean = false,
     /** Grid pitch the app is sounding right now (a tapped note or a scale), to light it up. */
     val playingStep: Int? = null,
-    /** "Play the scale" drill in progress or just finished; null when not drilling. */
-    val exercise: ScaleExercise? = null,
+    /** Scale or fretboard drill in progress or just finished; null when not drilling. */
+    val exercise: Drill? = null,
+    /** Fretboard drill: light up the spot asked for, not just name it. */
+    val drillHint: Boolean = false,
     val frequency: Double? = null,
     val error: String? = null,
 ) {
@@ -168,15 +170,40 @@ class FretboardViewModel : ViewModel() {
         playSequence(steps, SCALE_NOTE_MS, SCALE_TONE_MS)
     }
 
-    /** Starts the "play the scale" drill in the current direction; it needs the mic, so turns it on. */
+    /** Starts the "play the scale" drill in the current direction. */
     fun startExercise() {
         val steps = scaleSteps(_state.value) ?: return
+        beginDrill(Drill(steps))
+    }
+
+    /**
+     * Starts the fretboard drill: random spots among those shown right now (layers, range and
+     * chosen course), open strings left out as too easy.
+     */
+    fun startFretboardDrill() {
+        val s = _state.value
+        val choices = Fretboard.positions(s.tuning, s.maxCents).filter {
+            it.cents > 0 && s.isVisible(it, null) && (s.onlyCourse == null || it.course == s.onlyCourse)
+        }
+        if (choices.isEmpty()) return
+        beginDrill(Drill.onFretboard(choices))
+    }
+
+    /** Runs the same kind of drill again from the start. */
+    fun restartExercise() {
+        if (_state.value.exercise?.places != null) startFretboardDrill() else startExercise()
+    }
+
+    /** Drills need the mic, so starting one turns it on. */
+    private fun beginDrill(drill: Drill) {
         steady.reset()
         awaitingPluck = false
-        _state.update { it.copy(exercise = ScaleExercise(steps), live = true) }
+        _state.update { it.copy(exercise = drill, live = true) }
     }
 
     fun stopExercise() = _state.update { it.copy(exercise = null) }
+
+    fun toggleDrillHint() = _state.update { it.copy(drillHint = !it.drillHint) }
 
     /**
      * Plays grid pitches one after another, [noteMs] apart, each ringing for [toneMs], and marks

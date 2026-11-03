@@ -128,7 +128,11 @@ private fun FretboardScreen(
                 if (state.exercise != null) {
                     ExercisePanel(state, vm, needsMic, onRequestMic)
                 } else {
-                    HeardBar(state, needsMic, onRequestMic, vm::setLive)
+                    HeardBar(
+                        state, needsMic, onRequestMic, vm::setLive,
+                        // Scale tabs start their drill from the scale bar.
+                        onDrill = if (scaleMode) null else vm::startFretboardDrill,
+                    )
                 }
                 if (scaleMode) ScaleBar(state, vm, mode.choices)
                 Options(state, vm, scaleMode)
@@ -156,6 +160,7 @@ private fun HeardBar(
     needsMic: Boolean,
     onRequestMic: () -> Unit,
     onLive: (Boolean) -> Unit,
+    onDrill: (() -> Unit)?,
 ) {
     val heard = state.heard
     Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -206,6 +211,7 @@ private fun HeardBar(
                 }
             }
         }
+        onDrill?.let { TextButton(onClick = it, modifier = Modifier.padding(end = 16.dp)) { Text("🎯 Найди ноту") } }
         Text("Слушать", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 8.dp))
         Switch(checked = state.live, onCheckedChange = onLive)
     }
@@ -355,18 +361,30 @@ private fun FretboardCanvas(state: FretboardUiState, onTap: (Position) -> Unit, 
     ) {
         val geometry = BoardGeometry(size, state.tuning.courses.size, state.bassOnTop, state.maxCents, this)
         drawBoard(geometry, colors, measurer)
+        // A scale drill shows every place for the due note; a fretboard drill shows its one
+        // spot, and only when the hint is on — finding it is the exercise.
+        val drill = state.exercise
+        fun drillShows(p: Position): Boolean = when {
+            drill == null || p.pitch.step != drill.target -> false
+            drill.places == null -> true
+            else -> state.drillHint && p == drill.targetPlace
+        }
+        // In a fretboard drill the names would give the answer away: only what lights up is named.
+        val hideNames = drill?.places != null && !drill.done && !state.drillHint
         positions.forEach { p ->
             // What the app plays, or the note the drill asks for, lights up just like what the
             // mic hears, in its own colour.
             val highlight = when {
                 p.pitch.step == state.playingStep -> colors.playing
-                p.pitch.step == state.exercise?.target -> colors.playing
+                drillShows(p) -> colors.playing
                 p in heardPositions -> colors.heard
                 else -> null
             }
             if (state.isVisible(p, scale) || highlight != null) {
                 val note = scale?.get(p.pitch.step.mod(24))
-                val label = state.labelFor(p.pitch, scale)
+                // Open strings keep their names: they say which string is which.
+                val hidden = hideNames && highlight == null && p.cents > 0
+                val label = if (hidden) "" else state.labelFor(p.pitch, scale)
                 drawPosition(p, geometry, label, note, state.showFingers, highlight, colors, measurer)
             }
         }
@@ -655,8 +673,14 @@ private fun ExercisePanel(
                             style = MaterialTheme.typography.titleMedium,
                             color = muted,
                         )
+                        val place = exercise.targetPlace
+                        val where = place?.let {
+                            val open = state.tuning.courses[it.course]
+                            val course = Pitch.of(open).label(state.labels)
+                            " на струне " + if (state.labels == NoteLabels.Arabic) course else "$course${open.octave}"
+                        } ?: ""
                         Text(
-                            "сыграй ${name(target)}",
+                            "сыграй ${name(target)}$where",
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                         )
@@ -681,7 +705,10 @@ private fun ExercisePanel(
                     }
                 }
             }
-            TextButton(onClick = vm::startExercise) { Text(if (exercise.done) "Ещё раз" else "Заново") }
+            if (exercise.places != null) {
+                FilterChip(state.drillHint, onClick = vm::toggleDrillHint, label = { Text("Подсказка") })
+            }
+            TextButton(onClick = vm::restartExercise) { Text(if (exercise.done) "Ещё раз" else "Заново") }
             TextButton(onClick = vm::stopExercise) { Text("Закончить") }
         }
         Text(

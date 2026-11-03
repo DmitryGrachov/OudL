@@ -1,17 +1,22 @@
 package com.udl.oud.fretboard
 
 import kotlin.math.abs
+import kotlin.random.Random
 
 /**
- * "Play the scale" drill: the player plays [steps] (grid pitches) in order; each note is taken
- * once it rings steadily near its target, and its offset in cents is kept as the result.
+ * A drill: the player plays [steps] (grid pitches) in order; each note is taken once it rings
+ * steadily near its target, and its offset in cents is kept as the result. A scale drill walks
+ * up or down the scale; a fretboard drill also names the [places] where each note is to be found.
  */
-data class ScaleExercise(
+data class Drill(
     val steps: List<Int>,
     /** Offset in cents of each note played so far, in order. */
     val results: List<Double> = emptyList(),
+    /** For a fretboard drill, the spot on the neck asked for with each step. */
+    val places: List<Position>? = null,
 ) {
     val target: Int? get() = steps.getOrNull(results.size)
+    val targetPlace: Position? get() = places?.getOrNull(results.size)
     val done: Boolean get() = results.size == steps.size
 
     val inTuneCount: Int get() = results.count { abs(it) <= FretboardUiState.IN_TUNE_CENTS }
@@ -21,6 +26,24 @@ data class ScaleExercise(
     val worst: Int? get() = results.indices.maxByOrNull { abs(results[it]) }
 
     fun record(cents: Double) = copy(results = results + cents)
+
+    companion object {
+        /**
+         * A fretboard drill of [count] spots drawn from [choices], never the same pitch twice in
+         * a row (the previous note would still be ringing).
+         */
+        fun onFretboard(choices: List<Position>, count: Int = FRETBOARD_NOTES, random: Random = Random): Drill {
+            require(choices.isNotEmpty())
+            val places = mutableListOf<Position>()
+            repeat(count) {
+                val fresh = choices.filter { it.pitch != places.lastOrNull()?.pitch }.ifEmpty { choices }
+                places += fresh.random(random)
+            }
+            return Drill(places.map { it.pitch.step }, places = places)
+        }
+
+        const val FRETBOARD_NOTES = 10
+    }
 }
 
 /**

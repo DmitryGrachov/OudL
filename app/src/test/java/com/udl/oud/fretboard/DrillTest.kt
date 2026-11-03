@@ -6,7 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class ScaleExerciseTest {
+class DrillTest {
     @Test fun steadyNoteIsTakenWithItsMedianOffset() {
         val steady = SteadyNote()
         val readings = listOf(-8.0, -6.0, -7.0, -5.0, -9.0)
@@ -33,8 +33,25 @@ class ScaleExerciseTest {
         assertEquals(30.0, steady.add(30.0)!!, 0.001)
     }
 
+    @Test fun fretboardDrillNamesTenSpotsWithoutRepeatingAPitchBackToBack() {
+        val tuning = com.udl.oud.tuner.Tunings.all.first()
+        val choices = Fretboard.positions(tuning).filter { it.cents > 0 && it.pitch.isNatural }
+        val drill = Drill.onFretboard(choices, random = kotlin.random.Random(7))
+        assertEquals(Drill.FRETBOARD_NOTES, drill.steps.size)
+        assertEquals(drill.steps, drill.places!!.map { it.pitch.step })
+        assertTrue(drill.places.all { it in choices })
+        assertTrue(drill.steps.zipWithNext().none { (a, b) -> a == b })
+        assertEquals(drill.places.first(), drill.targetPlace)
+    }
+
+    @Test fun fretboardDrillWithOneChoiceStillWorks() {
+        val only = Fretboard.positions(com.udl.oud.tuner.Tunings.all.first()).first { it.cents == 200 }
+        val drill = Drill.onFretboard(listOf(only), count = 3)
+        assertEquals(listOf(only, only, only), drill.places)
+    }
+
     @Test fun exerciseWalksThroughTheStepsAndScores() {
-        var exercise = ScaleExercise(listOf(96, 100, 103))
+        var exercise = Drill(listOf(96, 100, 103))
         assertEquals(96, exercise.target)
         exercise = exercise.record(4.0).record(-25.0)
         assertEquals(103, exercise.target)
