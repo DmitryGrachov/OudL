@@ -21,6 +21,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -31,6 +32,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -60,6 +64,7 @@ import com.udl.oud.fretboard.FretboardUiState
 import com.udl.oud.fretboard.FretboardViewModel
 import com.udl.oud.fretboard.Maqam
 import com.udl.oud.fretboard.Scale
+import com.udl.oud.fretboard.ScaleGroup
 import com.udl.oud.fretboard.WesternScale
 import com.udl.oud.fretboard.WesternScales
 import com.udl.oud.fretboard.NoteLabels
@@ -73,11 +78,14 @@ import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
-/** What a board tab shows: all notes, or one scale at a time picked from [choices]. */
-private enum class BoardMode(val title: String, val choices: List<Scale>) {
+/** What a board tab shows: all notes, or one scale at a time picked from [groups]. */
+private enum class BoardMode(val title: String, val groups: List<ScaleGroup>) {
     Notes("Гриф", emptyList()),
-    Maqamat("Макамы", com.udl.oud.fretboard.Maqamat.all),
-    Western("Гаммы", WesternScales.all),
+    Maqamat("Макамы", com.udl.oud.fretboard.Maqamat.families),
+    Western("Гаммы", listOf(ScaleGroup("Гаммы", WesternScales.all))),
+    ;
+
+    val choices: List<Scale> get() = groups.flatMap { it.scales }
 }
 
 /** The fretboard with all notes and layers. */
@@ -120,6 +128,9 @@ private fun FretboardScreen(
     onRequestMic: () -> Unit,
 ) {
     val scaleMode = mode.choices.isNotEmpty()
+    // View options (names, layers, course) fold away so the board keeps its height; the scale
+    // tabs have their own bar above, so there they start folded.
+    var optionsOpen by rememberSaveable(mode) { mutableStateOf(!scaleMode) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 600.dp
         // On tablets the navigation rail already names the screen; the board needs the height.
@@ -132,10 +143,12 @@ private fun FretboardScreen(
                         state, needsMic, onRequestMic, vm::setLive,
                         // Scale tabs start their drill from the scale bar.
                         onDrill = if (scaleMode) null else vm::startFretboardDrill,
+                        optionsOpen = optionsOpen,
+                        onToggleOptions = { optionsOpen = !optionsOpen },
                     )
                 }
-                if (scaleMode) ScaleBar(state, vm, mode.choices)
-                Options(state, vm, scaleMode)
+                if (scaleMode) ScaleBar(state, vm, mode.groups)
+                if (optionsOpen) Options(state, vm, scaleMode)
                 FretboardCanvas(state, onTap = vm::play, modifier = boardModifier)
             }
             if (wide) {
@@ -161,6 +174,8 @@ private fun HeardBar(
     onRequestMic: () -> Unit,
     onLive: (Boolean) -> Unit,
     onDrill: (() -> Unit)?,
+    optionsOpen: Boolean,
+    onToggleOptions: () -> Unit,
 ) {
     val heard = state.heard
     Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -211,7 +226,10 @@ private fun HeardBar(
                 }
             }
         }
-        onDrill?.let { TextButton(onClick = it, modifier = Modifier.padding(end = 16.dp)) { Text("🎯 Найди ноту") } }
+        onDrill?.let { TextButton(onClick = it, modifier = Modifier.padding(end = 8.dp)) { Text("🎯 Найди ноту") } }
+        TextButton(onClick = onToggleOptions, modifier = Modifier.padding(end = 8.dp)) {
+            Text(if (optionsOpen) "Вид ▴" else "Вид ▾")
+        }
         Text("Слушать", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 8.dp))
         Switch(checked = state.live, onCheckedChange = onLive)
     }
@@ -529,11 +547,36 @@ private fun upperJinsColor(): Color =
 
 /** Scale picker, tonic, direction, and the scale written out with its intervals. */
 @Composable
-private fun ScaleBar(state: FretboardUiState, vm: FretboardViewModel, choices: List<Scale>) {
+private fun ScaleBar(state: FretboardUiState, vm: FretboardViewModel, groups: List<ScaleGroup>) {
     Column(Modifier.fillMaxWidth()) {
+        // With several groups (maqam families) pick the family first, then a scale within it.
+        val group = groups.firstOrNull { state.selected in it.scales } ?: groups.first()
+        if (groups.size > 1) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Семья", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
+                groups.forEach { g ->
+                    FilterChip(
+                        g == group,
+                        onClick = { if (g != group) vm.select(g.scales.first()) },
+                        label = { Text(g.name) },
+                    )
+                }
+            }
+        }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            choices.forEach { choice ->
-                FilterChip(state.selected == choice, onClick = { vm.select(choice) }, label = { Text(choice.name) })
+            if (groups.size > 1) {
+                Text("Макам", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
+            }
+            group.scales.forEach { choice ->
+                FilterChip(
+                    state.selected == choice,
+                    onClick = { vm.select(choice) },
+                    label = { Text(choice.name) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = MaterialTheme.colorScheme.primary,
+                        selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                )
             }
         }
         val selected = state.selected ?: return@Column

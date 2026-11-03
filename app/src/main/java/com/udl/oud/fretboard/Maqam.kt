@@ -14,7 +14,9 @@ object Ajnas {
     val Kurd = Jins("Курд", listOf(2, 4, 4))
     val Ajam = Jins("Аджам", listOf(4, 4, 2))
     val Saba = Jins("Саба", listOf(3, 3, 2))
+    val SabaZamzam = Jins("Саба замзам", listOf(2, 4, 2))
     val Sikah = Jins("Сикях", listOf(3, 4))
+    val Nikriz = Jins("Никриз", listOf(4, 2, 6, 2))
 }
 
 /** How a note is written: a letter (0 = C … 6 = B) and an alteration in quarter tones. */
@@ -154,27 +156,97 @@ data class Maqam(
         spellScale(tonic, intervals(descending), upperFrom = ghammaz)
 }
 
+/** Scales shown together under one name, e.g. a maqam family (fasila). */
+data class ScaleGroup(val name: String, val scales: List<Scale>)
+
+/**
+ * Maqamat by family (fasila): a family shares the lower jins on the tonic and differs in what
+ * sits on top. Tonics follow the usual Arabic practice on an oud in C–C tuning.
+ */
 object Maqamat {
-    val all = listOf(
-        // Tonics follow the usual Arabic practice on an oud in C–C tuning.
-        Maqam(
-            "Раст", 96, Ajnas.Rast, 4, Ajnas.Rast, listOf(4, 3, 3, 4, 4, 3, 3), // C3
-            Descent(Ajnas.Nahawand, listOf(4, 3, 3, 4, 4, 2, 4)), // down through B♭
+    private const val C3 = 96
+    private const val D3 = 100
+    private const val E_HALF_FLAT3 = 103
+    private const val B_FLAT2 = 92
+    private const val B_HALF_FLAT2 = 93
+
+    val families = listOf(
+        ScaleGroup(
+            "Раст",
+            listOf(
+                Maqam(
+                    "Раст", C3, Ajnas.Rast, 4, Ajnas.Rast, listOf(4, 3, 3, 4, 4, 3, 3),
+                    Descent(Ajnas.Nahawand, listOf(4, 3, 3, 4, 4, 2, 4)), // down through B♭
+                ),
+                Maqam("Махур", C3, Ajnas.Rast, 4, Ajnas.Ajam, listOf(4, 3, 3, 4, 4, 4, 2)), // B natural
+                Maqam("Сузнак", C3, Ajnas.Rast, 4, Ajnas.Hijaz, listOf(4, 3, 3, 4, 2, 6, 2)),
+                Maqam("Найруз", C3, Ajnas.Rast, 4, Ajnas.Bayati, listOf(4, 3, 3, 4, 3, 3, 4)),
+            ),
         ),
-        Maqam("Баяти", 100, Ajnas.Bayati, 3, Ajnas.Nahawand, listOf(3, 3, 4, 4, 2, 4, 4)), // D3
-        Maqam(
-            "Хиджаз", 100, Ajnas.Hijaz, 3, Ajnas.Rast, listOf(2, 6, 2, 4, 3, 3, 4), // D3
-            Descent(Ajnas.Nahawand, listOf(2, 6, 2, 4, 2, 4, 4)), // down through B♭
+        ScaleGroup(
+            "Баяти",
+            listOf(
+                Maqam("Баяти", D3, Ajnas.Bayati, 3, Ajnas.Nahawand, listOf(3, 3, 4, 4, 2, 4, 4)),
+                Maqam("Баяти шури", D3, Ajnas.Bayati, 3, Ajnas.Hijaz, listOf(3, 3, 4, 2, 6, 2, 4)),
+                Maqam("Хусейни", D3, Ajnas.Bayati, 4, Ajnas.Bayati, listOf(3, 3, 4, 4, 3, 3, 4)),
+            ),
         ),
-        Maqam("Саба", 100, Ajnas.Saba, 2, Ajnas.Hijaz, listOf(3, 3, 2, 6, 2, 4, 4)), // D3
-        Maqam(
-            "Нахаванд", 96, Ajnas.Nahawand, 4, Ajnas.Hijaz, listOf(4, 2, 4, 4, 2, 6, 2), // C3
-            Descent(Ajnas.Kurd, listOf(4, 2, 4, 4, 2, 4, 4)), // down through B♭
+        ScaleGroup(
+            "Хиджаз",
+            listOf(
+                Maqam(
+                    "Хиджаз", D3, Ajnas.Hijaz, 3, Ajnas.Rast, listOf(2, 6, 2, 4, 3, 3, 4),
+                    Descent(Ajnas.Nahawand, listOf(2, 6, 2, 4, 2, 4, 4)), // down through B♭
+                ),
+                Maqam("Хиджазкар", C3, Ajnas.Hijaz, 4, Ajnas.Hijaz, listOf(2, 6, 2, 4, 2, 6, 2)),
+                Maqam("Занджаран", C3, Ajnas.Hijaz, 4, Ajnas.Ajam, listOf(2, 6, 2, 4, 4, 4, 2)),
+            ),
         ),
-        Maqam("Курд", 100, Ajnas.Kurd, 3, Ajnas.Nahawand, listOf(2, 4, 4, 4, 2, 4, 4)), // D3
-        Maqam("Аджам", 92, Ajnas.Ajam, 4, Ajnas.Ajam, listOf(4, 4, 2, 4, 4, 4, 2)), // B♭2
-        Maqam("Сикях", 103, Ajnas.Sikah, 2, Ajnas.Rast, listOf(3, 4, 4, 3, 3, 4, 3)), // E½♭3
+        ScaleGroup(
+            "Саба",
+            listOf(
+                Maqam("Саба", D3, Ajnas.Saba, 2, Ajnas.Hijaz, listOf(3, 3, 2, 6, 2, 4, 4)),
+                Maqam("Саба замзам", D3, Ajnas.SabaZamzam, 2, Ajnas.Hijaz, listOf(2, 4, 2, 6, 2, 4, 4)),
+            ),
+        ),
+        ScaleGroup(
+            "Нахаванд",
+            listOf(
+                Maqam(
+                    "Нахаванд", C3, Ajnas.Nahawand, 4, Ajnas.Hijaz, listOf(4, 2, 4, 4, 2, 6, 2),
+                    Descent(Ajnas.Kurd, listOf(4, 2, 4, 4, 2, 4, 4)), // down through A♭ B♭
+                ),
+            ),
+        ),
+        ScaleGroup(
+            "Курд",
+            listOf(
+                Maqam("Курд", D3, Ajnas.Kurd, 3, Ajnas.Nahawand, listOf(2, 4, 4, 4, 2, 4, 4)),
+                Maqam("Хиджазкар-курд", C3, Ajnas.Kurd, 4, Ajnas.Hijaz, listOf(2, 4, 4, 4, 2, 6, 2)),
+            ),
+        ),
+        ScaleGroup(
+            "Аджам",
+            listOf(Maqam("Аджам", B_FLAT2, Ajnas.Ajam, 4, Ajnas.Ajam, listOf(4, 4, 2, 4, 4, 4, 2))),
+        ),
+        ScaleGroup(
+            "Сикях",
+            listOf(
+                Maqam("Сикях", E_HALF_FLAT3, Ajnas.Sikah, 2, Ajnas.Rast, listOf(3, 4, 4, 3, 3, 4, 3)),
+                Maqam("Хузам", E_HALF_FLAT3, Ajnas.Sikah, 2, Ajnas.Hijaz, listOf(3, 4, 2, 6, 2, 4, 3)),
+                Maqam("Ирак", B_HALF_FLAT2, Ajnas.Sikah, 2, Ajnas.Bayati, listOf(3, 4, 3, 3, 4, 4, 3)),
+            ),
+        ),
+        ScaleGroup(
+            "Никриз",
+            listOf(
+                Maqam("Никриз", C3, Ajnas.Nikriz, 4, Ajnas.Nahawand, listOf(4, 2, 6, 2, 4, 2, 4)),
+                Maqam("Нава асар", C3, Ajnas.Nikriz, 4, Ajnas.Hijaz, listOf(4, 2, 6, 2, 2, 6, 2)),
+            ),
+        ),
     )
+
+    val all: List<Maqam> = families.flatMap { group -> group.scales.map { it as Maqam } }
 }
 
 /** An interval in quarter tones as tones: 1, ¾, ½, 1½. */

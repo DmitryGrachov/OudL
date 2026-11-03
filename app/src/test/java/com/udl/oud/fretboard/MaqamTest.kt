@@ -1,6 +1,7 @@
 package com.udl.oud.fretboard
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MaqamTest {
@@ -13,7 +14,49 @@ class MaqamTest {
 
     @Test fun everyMaqamSpansAnOctave() {
         // The Maqam constructor checks this and the ajnas; building the list must not throw.
-        assertEquals(8, Maqamat.all.size)
+        assertEquals(21, Maqamat.all.size)
+        assertEquals(9, Maqamat.families.size)
+    }
+
+    @Test fun aFamilyIsNamedAfterItsLowerJins() {
+        // Saba Zamzam (D E♭ F G♭) is a variant of jins Saba and belongs to its family.
+        Maqamat.families.forEach { family ->
+            family.scales.forEach {
+                assertTrue("${it.name} in ${family.name}", (it as Maqam).lower.name.startsWith(family.name))
+            }
+        }
+    }
+
+    @Test fun namesAreUnique() = assertEquals(Maqamat.all.size, Maqamat.all.map { it.name }.toSet().size)
+
+    @Test fun rastFamily() {
+        assertEquals("До Ре Ми½♭ Фа Соль Ля Си", spelled("Махур"))
+        assertEquals("До Ре Ми½♭ Фа Соль Ля♭ Си", spelled("Сузнак"))
+        assertEquals("До Ре Ми½♭ Фа Соль Ля½♭ Си♭", spelled("Найруз"))
+    }
+
+    @Test fun bayatiFamily() {
+        assertEquals("Ре Ми½♭ Фа Соль Ля♭ Си До", spelled("Баяти шури"))
+        assertEquals("Ре Ми½♭ Фа Соль Ля Си½♭ До", spelled("Хусейни"))
+    }
+
+    @Test fun hijazFamily() {
+        assertEquals("До Ре♭ Ми Фа Соль Ля♭ Си", spelled("Хиджазкар"))
+        assertEquals("До Ре♭ Ми Фа Соль Ля Си", spelled("Занджаран"))
+    }
+
+    @Test fun sabaZamzamHasEFlat() = assertEquals("Ре Ми♭ Фа Соль♭ Ля Си♭ До", spelled("Саба замзам"))
+
+    @Test fun hijazkarKurd() = assertEquals("До Ре♭ Ми♭ Фа Соль Ля♭ Си", spelled("Хиджазкар-курд"))
+
+    @Test fun sikahFamily() {
+        assertEquals("Ми½♭ Фа Соль Ля♭ Си До Ре", spelled("Хузам"))
+        assertEquals("Си½♭ До Ре Ми½♭ Фа Соль Ля", spelled("Ирак"))
+    }
+
+    @Test fun nikrizFamily() {
+        assertEquals("До Ре Ми♭ Фа♯ Соль Ля Си♭", spelled("Никриз"))
+        assertEquals("До Ре Ми♭ Фа♯ Соль Ля♭ Си", spelled("Нава асар"))
     }
 
     @Test fun rastHasHalfFlatThirdAndSeventh() =
