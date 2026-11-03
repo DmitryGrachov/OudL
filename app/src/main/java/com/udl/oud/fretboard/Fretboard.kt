@@ -20,8 +20,11 @@ data class Pitch(val step: Int) {
 
     fun frequency(a4: Double): Double = a4 * 2.0.pow((step / 2.0 - 69) / 12)
 
+    /** Arabic name of this exact pitch, if it has a common one. */
+    val arabicName: String? get() = ARABIC_NAMES[step]
+
     fun label(style: NoteLabels): String {
-        if (style == NoteLabels.Arabic) ARABIC_NAMES[step]?.let { return it }
+        if (style == NoteLabels.Arabic) arabicName?.let { return it }
         val latin = style == NoteLabels.Latin
         if (!isQuarterTone) return Note(step / 2).let { if (latin) it.latin else it.solfege }
         // A quarter tone is written as the natural note above it lowered by half a flat,

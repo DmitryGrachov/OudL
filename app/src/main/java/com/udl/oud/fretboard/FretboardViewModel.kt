@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -35,19 +36,30 @@ data class FretboardUiState(
     val live: Boolean = true,
     /** Course the player says they are playing on; null means any. */
     val onlyCourse: Int? = null,
+    /** Maqam whose notes are shown instead of the chromatic layers; null shows all notes. */
+    val maqam: Maqam? = null,
+    /** Tonic the maqam is built on, as a grid step (2 × MIDI). */
+    val maqamTonic: Int = 0,
     val frequency: Double? = null,
     val error: String? = null,
 ) {
     val maxCents: Int
         get() = if (extended) Fretboard.EXTENDED_CENTS else Fretboard.NECK_CENTS
 
+    /** Maqam degrees by pitch class (grid step mod 24), or null when no maqam is shown. */
+    val scale: Map<Int, ScaleNote>?
+        get() = maqam?.notes(maqamTonic)?.associateBy { (maqamTonic + it.offset).mod(24) }
+
     /** Where the heard note can be played, and its offset from the nearest grid pitch. */
     val heard: Pair<List<Position>, Double>?
         get() = frequency?.let {
-            Fretboard.matches(tuning, it, a4.toDouble(), showQuarterTones, onlyCourse, maxCents)
+            // Maqam notes include quarter tones, so measure against them even if that layer is off.
+            val quarterTones = showQuarterTones || maqam != null
+            Fretboard.matches(tuning, it, a4.toDouble(), quarterTones, onlyCourse, maxCents)
         }
 
-    fun isVisible(position: Position): Boolean = when {
+    fun isVisible(position: Position, scale: Map<Int, ScaleNote>?): Boolean = when {
+        scale != null -> position.pitch.step.mod(24) in scale
         position.pitch.isQuarterTone -> showQuarterTones
         !position.pitch.isNatural -> showAccidentals
         else -> true
@@ -67,6 +79,7 @@ class FretboardViewModel : ViewModel() {
     private val tone = ReferenceTone()
     private val tracker = PitchTracker()
     private var listenJob: Job? = null
+    private var scaleJob: Job? = null
     private var ignoreMicUntil = 0L
 
     init {
@@ -103,6 +116,30 @@ class FretboardViewModel : ViewModel() {
     fun toggleExtended() = _state.update { it.copy(extended = !it.extended) }
     fun setOnlyCourse(course: Int?) = _state.update { it.copy(onlyCourse = course) }
 
+    fun setMaqam(maqam: Maqam?) = _state.update { it.copy(maqam = maqam, maqamTonic = maqam?.tonic ?: 0) }
+
+    /** Moves the maqam to another tonic, [semitones] up or down. */
+    fun shiftTonic(semitones: Int) = _state.update {
+        it.copy(maqamTonic = (it.maqamTonic + semitones * 2).coerceIn(TONIC_MIN, TONIC_MAX))
+    }
+
+    /** Plays the maqam up from its tonic to the octave. */
+    fun playScale() {
+        val s = _state.value
+        val maqam = s.maqam ?: return
+        val steps = maqam.notes(s.maqamTonic).map { s.maqamTonic + it.offset } + (s.maqamTonic + 24)
+        ignoreMicUntil = SystemClock.elapsedRealtime() + steps.size * SCALE_NOTE_MS + SCALE_TONE_MS
+        tracker.reset()
+        _state.update { it.copy(frequency = null) }
+        scaleJob?.cancel()
+        scaleJob = viewModelScope.launch(Dispatchers.Default) {
+            steps.forEach { step ->
+                tone.play(Pitch(step).frequency(s.a4.toDouble()), SCALE_TONE_MS.toInt())
+                delay(SCALE_NOTE_MS)
+            }
+        }
+    }
+
     /** Turning live mode off releases the microphone; the screen calls [start] again when it is on. */
     fun setLive(live: Boolean) {
         _state.update { it.copy(live = live) }
@@ -133,5 +170,12 @@ class FretboardViewModel : ViewModel() {
 
     override fun onCleared() {
         tone.stop()
+    }
+
+    private companion object {
+        const val TONIC_MIN = 72 // C2
+        const val TONIC_MAX = 120 // C4
+        const val SCALE_NOTE_MS = 550L
+        const val SCALE_TONE_MS = 900L
     }
 }
