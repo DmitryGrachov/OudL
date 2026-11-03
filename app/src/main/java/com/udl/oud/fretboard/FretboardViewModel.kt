@@ -36,11 +36,11 @@ data class FretboardUiState(
     val live: Boolean = true,
     /** Course the player says they are playing on; null means any. */
     val onlyCourse: Int? = null,
-    /** Maqam whose notes are shown instead of the chromatic layers; null shows all notes. */
-    val maqam: Maqam? = null,
-    /** Tonic the maqam is built on, as a grid step (2 × MIDI). */
-    val maqamTonic: Int = 0,
-    /** Show the maqam's descending form. */
+    /** Maqam or scale whose notes are shown instead of the chromatic layers; null shows all notes. */
+    val selected: Scale? = null,
+    /** Tonic the selected scale is built on, as a grid step (2 × MIDI). */
+    val tonic: Int = 0,
+    /** Show the selected scale's descending form. */
     val descending: Boolean = false,
     /** Grid pitch the app is sounding right now (a tapped note or a scale), to light it up. */
     val playingStep: Int? = null,
@@ -50,20 +50,22 @@ data class FretboardUiState(
     val maxCents: Int
         get() = if (extended) Fretboard.EXTENDED_CENTS else Fretboard.NECK_CENTS
 
-    /** Maqam degrees by pitch class (grid step mod 24), or null when no maqam is shown. */
-    val scale: Map<Int, ScaleNote>?
-        get() = maqamNotes?.associateBy { (maqamTonic + it.offset).mod(24) }
+    /** Degrees of the selected scale by pitch class (grid step mod 24), or null when none is shown. */
+    val degrees: Map<Int, ScaleNote>?
+        get() = selectedNotes?.associateBy { (tonic + it.offset).mod(24) }
 
-    /** The maqam's degrees bottom-up in the chosen direction, or null when no maqam is shown. */
-    val maqamNotes: List<ScaleNote>?
-        get() = maqam?.notes(maqamTonic, descending)
+    /** The selected scale's degrees bottom-up in the chosen direction, or null when none is shown. */
+    val selectedNotes: List<ScaleNote>?
+        get() = selected?.notes(tonic, descending)
+
+    /** Maqam notes include quarter tones, so heard notes snap to them even if that layer is off. */
+    val snapToQuarterTones: Boolean
+        get() = showQuarterTones || selected is Maqam
 
     /** Where the heard note can be played, and its offset from the nearest grid pitch. */
     val heard: Pair<List<Position>, Double>?
         get() = frequency?.let {
-            // Maqam notes include quarter tones, so measure against them even if that layer is off.
-            val quarterTones = showQuarterTones || maqam != null
-            Fretboard.matches(tuning, it, a4.toDouble(), quarterTones, onlyCourse, maxCents)
+            Fretboard.matches(tuning, it, a4.toDouble(), snapToQuarterTones, onlyCourse, maxCents)
         }
 
     fun isVisible(position: Position, scale: Map<Int, ScaleNote>?): Boolean = when {
@@ -125,21 +127,21 @@ class FretboardViewModel : ViewModel() {
     fun toggleExtended() = _state.update { it.copy(extended = !it.extended) }
     fun setOnlyCourse(course: Int?) = _state.update { it.copy(onlyCourse = course) }
 
-    fun setMaqam(maqam: Maqam?) =
-        _state.update { it.copy(maqam = maqam, maqamTonic = maqam?.tonic ?: 0, descending = false) }
+    fun select(scale: Scale?) =
+        _state.update { it.copy(selected = scale, tonic = scale?.tonic ?: 0, descending = false) }
 
     fun setDescending(descending: Boolean) = _state.update { it.copy(descending = descending) }
 
-    /** Moves the maqam to another tonic, [semitones] up or down. */
+    /** Moves the scale to another tonic, [semitones] up or down. */
     fun shiftTonic(semitones: Int) = _state.update {
-        it.copy(maqamTonic = (it.maqamTonic + semitones * 2).coerceIn(TONIC_MIN, TONIC_MAX))
+        it.copy(tonic = (it.tonic + semitones * 2).coerceIn(TONIC_MIN, TONIC_MAX))
     }
 
-    /** Plays the maqam from tonic to octave, or from the octave down in its descending form. */
+    /** Plays the scale from tonic to octave, or from the octave down in its descending form. */
     fun playScale() {
         val s = _state.value
-        val notes = s.maqamNotes ?: return
-        val up = notes.map { s.maqamTonic + it.offset } + (s.maqamTonic + 24)
+        val notes = s.selectedNotes ?: return
+        val up = notes.map { s.tonic + it.offset } + (s.tonic + 24)
         playSequence(if (s.descending) up.reversed() else up, SCALE_NOTE_MS, SCALE_TONE_MS)
     }
 

@@ -58,15 +58,55 @@ data class Spelling(val letter: Int, val alter: Int) {
     }
 }
 
-/** One degree of a maqam built on a given tonic. */
+/** One degree of a scale built on a given tonic. */
 data class ScaleNote(
     val degree: Int,
     /** Quarter tones above the tonic. */
     val offset: Int,
     val spelling: Spelling,
-    /** Degrees below the ghammaz belong to the lower jins, the rest to the upper one. */
+    /** In a maqam, degrees from the ghammaz up belong to the upper jins; always false otherwise. */
     val upper: Boolean,
 )
+
+/** A scale the board can show: an Arabic maqam or a European scale. */
+sealed interface Scale {
+    val name: String
+
+    /** Usual tonic as a grid step (2 × MIDI). */
+    val tonic: Int
+
+    /** Whether the scale comes down differently from how it goes up. */
+    val hasDescent: Boolean
+
+    /** Steps from the tonic up to the octave, in quarter tones, for the chosen direction. */
+    fun intervals(descending: Boolean): List<Int>
+
+    /** Degrees on [tonic], bottom-up, for the chosen direction. */
+    fun notes(tonic: Int = this.tonic, descending: Boolean = false): List<ScaleNote>
+}
+
+/**
+ * Builds and spells the degrees of a scale. Each degree takes the letter [letters] gives it,
+ * counted from the tonic's letter (the next letter per step for seven-note scales), so that
+ * e.g. Hijaz on D reads D E♭ F♯ G rather than D D♯ F♯ G.
+ */
+internal fun spellScale(
+    tonic: Int,
+    intervals: List<Int>,
+    letters: List<Int> = (0..6).toList(),
+    upperFrom: Int = Int.MAX_VALUE,
+): List<ScaleNote> {
+    val tonicSpelling = Spelling.of(tonic)
+    var offset = 0
+    return intervals.indices.map { degree ->
+        if (degree > 0) offset += intervals[degree - 1]
+        val pc = (tonic + offset).mod(24)
+        val letter = (tonicSpelling.letter + letters[degree]) % 7
+        val alter = (pc - Spelling.NATURAL_STEPS[letter] + 12).mod(24) - 12
+        val spelling = if (alter in -2..2) Spelling(letter, alter) else Spelling.of(pc)
+        ScaleNote(degree, offset, spelling, upper = degree >= upperFrom)
+    }
+}
 
 /**
  * How a maqam comes down when that differs from going up: the upper jins on the ghammaz is
@@ -80,9 +120,8 @@ data class Descent(val upper: Jins, val intervals: List<Int>)
  * of the maqam), with [intervals] giving the whole ascending octave in quarter tones.
  */
 data class Maqam(
-    val name: String,
-    /** Usual tonic as a grid step (2 × MIDI). */
-    val tonic: Int,
+    override val name: String,
+    override val tonic: Int,
     val lower: Jins,
     /** Degree (0 = tonic) where the upper jins starts. */
     val ghammaz: Int,
@@ -90,7 +129,7 @@ data class Maqam(
     val intervals: List<Int>,
     /** Descending form, or null when the maqam comes down the way it goes up. */
     val descent: Descent? = null,
-) {
+) : Scale {
     init {
         checkOctave(intervals, upper)
         descent?.let { checkOctave(it.intervals, it.upper) }
@@ -106,25 +145,13 @@ data class Maqam(
 
     fun upperJins(descending: Boolean): Jins = if (descending) descent?.upper ?: upper else upper
 
-    fun intervals(descending: Boolean): List<Int> = if (descending) descent?.intervals ?: intervals else intervals
+    override val hasDescent: Boolean get() = descent != null
 
-    /**
-     * The seven degrees on [tonic], bottom-up, each spelled with the next letter after the
-     * previous one, so that e.g. Hijaz on D reads D E♭ F♯ G rather than D D♯ F♯ G.
-     */
-    fun notes(tonic: Int = this.tonic, descending: Boolean = false): List<ScaleNote> {
-        val intervals = intervals(descending)
-        val tonicSpelling = Spelling.of(tonic)
-        var offset = 0
-        return (0 until 7).map { degree ->
-            if (degree > 0) offset += intervals[degree - 1]
-            val pc = (tonic + offset).mod(24)
-            val letter = (tonicSpelling.letter + degree) % 7
-            val alter = (pc - Spelling.NATURAL_STEPS[letter] + 12).mod(24) - 12
-            val spelling = if (alter in -2..2) Spelling(letter, alter) else Spelling.of(pc)
-            ScaleNote(degree, offset, spelling, upper = degree >= ghammaz)
-        }
-    }
+    override fun intervals(descending: Boolean): List<Int> =
+        if (descending) descent?.intervals ?: intervals else intervals
+
+    override fun notes(tonic: Int, descending: Boolean): List<ScaleNote> =
+        spellScale(tonic, intervals(descending), upperFrom = ghammaz)
 }
 
 object Maqamat {

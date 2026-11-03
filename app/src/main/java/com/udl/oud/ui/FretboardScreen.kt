@@ -57,7 +57,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.udl.oud.fretboard.Fretboard
 import com.udl.oud.fretboard.FretboardUiState
 import com.udl.oud.fretboard.FretboardViewModel
-import com.udl.oud.fretboard.Maqamat
+import com.udl.oud.fretboard.Maqam
+import com.udl.oud.fretboard.Scale
+import com.udl.oud.fretboard.WesternScale
+import com.udl.oud.fretboard.WesternScales
 import com.udl.oud.fretboard.NoteLabels
 import com.udl.oud.fretboard.Pitch
 import com.udl.oud.fretboard.Position
@@ -68,22 +71,33 @@ import com.udl.oud.ui.theme.InTuneGreen
 import kotlin.math.abs
 import kotlin.math.hypot
 
+/** What a board tab shows: all notes, or one scale at a time picked from [choices]. */
+private enum class BoardMode(val title: String, val choices: List<Scale>) {
+    Notes("Гриф", emptyList()),
+    Maqamat("Макамы", com.udl.oud.fretboard.Maqamat.all),
+    Western("Гаммы", WesternScales.all),
+}
+
 /** The fretboard with all notes and layers. */
 @Composable
-fun FretboardRoute() = BoardRoute(maqamMode = false)
+fun FretboardRoute() = BoardRoute(BoardMode.Notes)
 
 /** The same board showing one maqam at a time. */
 @Composable
-fun MaqamRoute() = BoardRoute(maqamMode = true)
+fun MaqamRoute() = BoardRoute(BoardMode.Maqamat)
+
+/** The same board showing one European scale at a time. */
+@Composable
+fun WesternScaleRoute() = BoardRoute(BoardMode.Western)
 
 @Composable
-private fun BoardRoute(maqamMode: Boolean) {
+private fun BoardRoute(mode: BoardMode) {
     // Each tab keeps its own board settings.
-    val vm: FretboardViewModel = viewModel(key = if (maqamMode) "maqam" else "fretboard")
+    val vm: FretboardViewModel = viewModel(key = mode.name)
     val mic = rememberMicPermission()
     val state by vm.state.collectAsStateWithLifecycle()
-    if (maqamMode && state.maqam == null) {
-        LaunchedEffect(Unit) { vm.setMaqam(Maqamat.all.first()) }
+    if (mode.choices.isNotEmpty() && state.selected == null) {
+        LaunchedEffect(Unit) { vm.select(mode.choices.first()) }
     }
     if (mic.granted && state.live) {
         LifecycleResumeEffect(Unit) {
@@ -92,25 +106,26 @@ private fun BoardRoute(maqamMode: Boolean) {
             onPauseOrDispose { vm.stop() }
         }
     }
-    FretboardScreen(state, vm, maqamMode, needsMic = state.live && !mic.granted, onRequestMic = mic.request)
+    FretboardScreen(state, vm, mode, needsMic = state.live && !mic.granted, onRequestMic = mic.request)
 }
 
 @Composable
 private fun FretboardScreen(
     state: FretboardUiState,
     vm: FretboardViewModel,
-    maqamMode: Boolean,
+    mode: BoardMode,
     needsMic: Boolean,
     onRequestMic: () -> Unit,
 ) {
+    val scaleMode = mode.choices.isNotEmpty()
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 600.dp
         // On tablets the navigation rail already names the screen; the board needs the height.
-        Scaffold(topBar = { if (!wide) TopAppBar(title = { Text(if (maqamMode) "Макамы" else "Гриф") }) }) { padding ->
+        Scaffold(topBar = { if (!wide) TopAppBar(title = { Text(mode.title) }) }) { padding ->
             val content: @Composable (Modifier) -> Unit = { boardModifier ->
                 HeardBar(state, needsMic, onRequestMic, vm::setLive)
-                if (maqamMode) MaqamBar(state, vm)
-                Options(state, vm, maqamMode)
+                if (scaleMode) ScaleBar(state, vm, mode.choices)
+                Options(state, vm, scaleMode)
                 FretboardCanvas(state, onTap = vm::play, modifier = boardModifier)
             }
             if (wide) {
@@ -150,18 +165,18 @@ private fun HeardBar(
                     "Нажми на точку, чтобы услышать ноту",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                heard == null && state.maqam != null -> AjnasSummary(state)
+                heard == null && state.selected != null -> ScaleSummary(state)
                 heard == null -> Text(
                     "Играй — место на грифе подсветится",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 else -> {
                     val (positions, cents) = heard
-                    val scale = state.scale
+                    val scale = state.degrees
                     val pitch = positions.firstOrNull()?.pitch
-                        ?: Pitch.nearest(state.frequency!!, state.a4.toDouble(), state.showQuarterTones || scale != null)
+                        ?: Pitch.nearest(state.frequency!!, state.a4.toDouble(), state.snapToQuarterTones)
                     val inTune = abs(cents) <= FretboardUiState.IN_TUNE_CENTS
-                    val outsideMaqam = scale != null && pitch.step.mod(24) !in scale
+                    val outside = scale != null && pitch.step.mod(24) !in scale
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             state.labelFor(pitch, scale),
@@ -172,7 +187,11 @@ private fun HeardBar(
                         Text(
                             "  ${signedCents(cents)}" +
                                 (if (positions.isEmpty()) "  · не на грифе" else "") +
-                                (if (outsideMaqam) "  · не из макама" else ""),
+                                when {
+                                    !outside -> ""
+                                    state.selected is Maqam -> "  · не из макама"
+                                    else -> "  · не из гаммы"
+                                },
                             style = MaterialTheme.typography.titleMedium,
                             color = if (inTune) InTuneGreen else MaterialTheme.colorScheme.tertiary,
                         )
@@ -207,7 +226,7 @@ private fun CentsBar(cents: Double, modifier: Modifier) {
 }
 
 @Composable
-private fun Options(state: FretboardUiState, vm: FretboardViewModel, maqamMode: Boolean) {
+private fun Options(state: FretboardUiState, vm: FretboardViewModel, scaleMode: Boolean) {
     FlowRow(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -218,8 +237,8 @@ private fun Options(state: FretboardUiState, vm: FretboardViewModel, maqamMode: 
                 FilterChip(state.labels == labels, onClick = { vm.setLabels(labels) }, label = { Text(title) })
             }
         Text("·", Modifier.align(Alignment.CenterVertically), color = MaterialTheme.colorScheme.outline)
-        // A maqam decides by itself which notes are shown, so the note layers only make sense here.
-        if (!maqamMode) {
+        // A scale decides by itself which notes are shown, so the note layers only make sense without one.
+        if (!scaleMode) {
             FilterChip(state.showAccidentals, onClick = vm::toggleAccidentals, label = { Text("♯ ♭") })
             FilterChip(state.showQuarterTones, onClick = vm::toggleQuarterTones, label = { Text("Четвертитоны") })
         }
@@ -290,7 +309,7 @@ private fun FretboardCanvas(state: FretboardUiState, onTap: (Position) -> Unit, 
         MaterialTheme.colorScheme.tertiary
     }
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val scale = state.scale
+    val scale = state.degrees
     val colors = BoardColors(
         upperJins = upperJinsColor(),
         wood = if (dark) Color(0xFF3B2A1D) else Color(0xFFE2C9A0),
@@ -482,27 +501,27 @@ private fun FretboardUiState.labelFor(pitch: Pitch, scale: Map<Int, ScaleNote>?)
 private fun upperJinsColor(): Color =
     if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF8DB6D9) else Color(0xFF3F6E99)
 
-/** Maqam picker, tonic, and the scale written out with its intervals and ajnas. */
+/** Scale picker, tonic, direction, and the scale written out with its intervals. */
 @Composable
-private fun MaqamBar(state: FretboardUiState, vm: FretboardViewModel) {
+private fun ScaleBar(state: FretboardUiState, vm: FretboardViewModel, choices: List<Scale>) {
     Column(Modifier.fillMaxWidth()) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Maqamat.all.forEach { maqam ->
-                FilterChip(state.maqam == maqam, onClick = { vm.setMaqam(maqam) }, label = { Text(maqam.name) })
+            choices.forEach { choice ->
+                FilterChip(state.selected == choice, onClick = { vm.select(choice) }, label = { Text(choice.name) })
             }
         }
-        val maqam = state.maqam ?: return@Column
-        val notes = state.maqamNotes ?: return@Column
-        val scale = state.scale
-        fun name(note: ScaleNote) = state.labelFor(Pitch(state.maqamTonic + note.offset), scale)
+        val selected = state.selected ?: return@Column
+        val notes = state.selectedNotes ?: return@Column
+        val scale = state.degrees
+        fun name(note: ScaleNote) = state.labelFor(Pitch(state.tonic + note.offset), scale)
         val lowerColor = MaterialTheme.colorScheme.primary
         val upperColor = upperJinsColor()
         val intervalColor = MaterialTheme.colorScheme.onSurfaceVariant
 
         // Tonic to octave, written in the direction it is played.
         val upNames = notes.map { name(it) to if (it.upper) upperColor else lowerColor } + (name(notes[0]) to lowerColor)
-        val upSteps = notes.map { state.maqamTonic + it.offset } + (state.maqamTonic + 24)
-        val upIntervals = maqam.intervals(state.descending)
+        val upSteps = notes.map { state.tonic + it.offset } + (state.tonic + 24)
+        val upIntervals = selected.intervals(state.descending)
         val names = if (state.descending) upNames.reversed() else upNames
         val steps = if (state.descending) upSteps.reversed() else upSteps
         val intervals = if (state.descending) upIntervals.reversed() else upIntervals
@@ -514,7 +533,7 @@ private fun MaqamBar(state: FretboardUiState, vm: FretboardViewModel) {
                 Text("Тоника", style = MaterialTheme.typography.labelLarge)
                 TextButton(onClick = { vm.shiftTonic(-1) }) { Text("−", fontSize = 20.sp) }
                 Text(
-                    name(notes[0]) + Note(state.maqamTonic / 2).octave,
+                    name(notes[0]) + Note(state.tonic / 2).octave,
                     style = MaterialTheme.typography.titleMedium,
                 )
                 TextButton(onClick = { vm.shiftTonic(1) }) { Text("+", fontSize = 20.sp) }
@@ -545,13 +564,27 @@ private fun MaqamBar(state: FretboardUiState, vm: FretboardViewModel) {
     }
 }
 
-/** How the shown maqam is built: lower jins on the tonic + upper jins on the ghammaz. */
+/**
+ * How the shown scale is built: for a maqam, lower jins on the tonic + upper jins on the
+ * ghammaz; for a European scale, what sets it apart.
+ */
 @Composable
-private fun AjnasSummary(state: FretboardUiState) {
-    val maqam = state.maqam ?: return
-    val notes = state.maqamNotes ?: return
-    val scale = state.scale
-    fun name(note: ScaleNote) = state.labelFor(Pitch(state.maqamTonic + note.offset), scale)
+private fun ScaleSummary(state: FretboardUiState) {
+    val selected = state.selected ?: return
+    val sameWayDown = if (state.descending && !selected.hasDescent) "  · вниз так же, как вверх" else ""
+    val hint = "    ◎ тоника · играй — место подсветится"
+    if (selected is WesternScale) {
+        Text(
+            selected.summary + sameWayDown + hint,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    val maqam = selected as Maqam
+    val notes = state.selectedNotes ?: return
+    val scale = state.degrees
+    fun name(note: ScaleNote) = state.labelFor(Pitch(state.tonic + note.offset), scale)
     val lowerColor = MaterialTheme.colorScheme.primary
     val upperColor = upperJinsColor()
     Text(
@@ -561,8 +594,8 @@ private fun AjnasSummary(state: FretboardUiState) {
             withStyle(SpanStyle(color = upperColor)) {
                 append("${maqam.upperJins(state.descending).name} на ${name(notes[maqam.ghammaz])}")
             }
-            if (state.descending && maqam.descent == null) append("  · вниз так же, как вверх")
-            append("    ◎ тоника · играй — место подсветится")
+            append(sameWayDown)
+            append(hint)
         },
         style = MaterialTheme.typography.titleMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,

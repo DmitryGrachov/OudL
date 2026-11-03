@@ -23,6 +23,7 @@ private enum class Destination(val title: String, val glyph: String) {
     Tuner("Тюнер", "♪"),
     Fretboard("Гриф", "≡"),
     Maqamat("Макамы", "♮"),
+    Scales("Гаммы", "♯"),
 }
 
 /** Top-level screens: a side rail on tablets, a bottom bar on phones. */
@@ -34,6 +35,7 @@ fun OudApp() {
             Destination.Tuner -> TunerRoute()
             Destination.Fretboard -> FretboardRoute()
             Destination.Maqamat -> MaqamRoute()
+            Destination.Scales -> WesternScaleRoute()
         }
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
