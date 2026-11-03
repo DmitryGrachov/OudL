@@ -2,10 +2,6 @@
 
 package com.udl.oud.ui
 
-import android.Manifest
-import android.content.pm.PackageManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -36,22 +32,16 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -71,20 +61,8 @@ import kotlin.math.sin
 
 @Composable
 fun TunerRoute(vm: TunerViewModel = viewModel()) {
-    val context = LocalContext.current
-    var hasPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED,
-        )
-    }
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        hasPermission = it
-    }
-    LaunchedEffect(Unit) {
-        if (!hasPermission) launcher.launch(Manifest.permission.RECORD_AUDIO)
-    }
-    if (hasPermission) {
+    val mic = rememberMicPermission()
+    if (mic.granted) {
         LifecycleResumeEffect(Unit) {
             @Suppress("MissingPermission")
             vm.start()
@@ -95,8 +73,8 @@ fun TunerRoute(vm: TunerViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     TunerScreen(
         state = state,
-        hasPermission = hasPermission,
-        onRequestPermission = { launcher.launch(Manifest.permission.RECORD_AUDIO) },
+        hasPermission = mic.granted,
+        onRequestPermission = mic.request,
         actions = TunerActions(
             onSelectTuning = vm::selectTuning,
             onSetMode = vm::setMode,
@@ -145,19 +123,6 @@ fun TunerScreen(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun PermissionRequest(onRequest: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            "Тюнеру нужен микрофон, чтобы слышать струны.",
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        Spacer(Modifier.height(16.dp))
-        Button(onClick = onRequest) { Text("Разрешить микрофон") }
     }
 }
 
@@ -240,7 +205,7 @@ private fun hint(state: TunerUiState): String {
     }
 }
 
-private fun signedCents(cents: Double): String {
+internal fun signedCents(cents: Double): String {
     val value = cents.roundToInt()
     return when {
         value > 0 -> "+$value ц"

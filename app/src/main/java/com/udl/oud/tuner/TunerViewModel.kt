@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.udl.oud.audio.MicPitchSource
 import com.udl.oud.audio.PitchReading
+import com.udl.oud.audio.PitchTracker
 import com.udl.oud.audio.ReferenceTone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -16,7 +17,6 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.math.abs
-import kotlin.math.pow
 
 enum class TunerMode {
     /** Each string against the tuning. */
@@ -74,18 +74,15 @@ data class TunerUiState(
 }
 
 class TunerViewModel : ViewModel() {
-    private val _state = MutableStateFlow(TunerUiState())
+    private val _state = MutableStateFlow(
+        TunerUiState(tuning = OudSettings.tuning.value, a4 = OudSettings.a4.value),
+    )
     val state = _state.asStateFlow()
 
     private val mic = MicPitchSource()
     private val tone = ReferenceTone()
+    private val tracker = PitchTracker()
     private var listenJob: Job? = null
-
-    private val recent = ArrayDeque<Double>()
-    private var smoothed: Double? = null
-    private var previousRms = 0f
-    private var onsetAt = 0L
-    private var lastHeardAt = 0L
     private var ignoreMicUntil = 0L
 
     /** Course mode: steady readings of the first string, captured once they agree. */
@@ -111,6 +108,7 @@ class TunerViewModel : ViewModel() {
     }
 
     fun selectTuning(tuning: Tuning) {
+        OudSettings.tuning.value = tuning
         _state.update {
             it.copy(tuning = tuning, lockedCourse = if (it.mode == TunerMode.Course) 0 else null)
         }
@@ -119,7 +117,11 @@ class TunerViewModel : ViewModel() {
 
     fun setAuto() = _state.update { it.copy(lockedCourse = null) }
 
-    fun changeA4(delta: Int) = _state.update { it.copy(a4 = (it.a4 + delta).coerceIn(A4_MIN, A4_MAX)) }
+    fun changeA4(delta: Int) {
+        val a4 = (_state.value.a4 + delta).coerceIn(A4_MIN, A4_MAX)
+        OudSettings.a4.value = a4
+        _state.update { it.copy(a4 = a4) }
+    }
 
     fun setMode(mode: TunerMode) {
         _state.update {
@@ -137,7 +139,7 @@ class TunerViewModel : ViewModel() {
         _state.update { it.copy(firstString = null, frequency = null) }
         captureWindow.clear()
         awaitingSecondPluck = false
-        resetHistory()
+        tracker.reset()
     }
 
     /** Tuning mode: locks onto a course and plays its reference tone. Course mode: picks the course. */
@@ -147,7 +149,7 @@ class TunerViewModel : ViewModel() {
             restartCourse()
             return
         }
-        resetHistory()
+        tracker.reset()
         // Don't let the speaker's own tone show up on the gauge.
         ignoreMicUntil = SystemClock.elapsedRealtime() + ReferenceTone.DURATION_MS + 200
         val s = _state.value
@@ -159,43 +161,21 @@ class TunerViewModel : ViewModel() {
         val now = SystemClock.elapsedRealtime()
         if (now < ignoreMicUntil) return
 
-        val loud = reading.rms >= SILENCE_RMS
-        // A sudden jump in loudness is a new pluck. A string rings sharp for its first instants,
-        // so readings from the attack are skipped instead of swinging the needle.
-        if (loud && reading.rms > previousRms * ONSET_RATIO) {
-            onsetAt = now
-            resetHistory()
-            awaitingSecondPluck = false
-        }
-        previousRms = reading.rms
-        if (awaitingSecondPluck) return
-
-        val pitch = reading.pitch
         val s = _state.value
-        val f = pitch?.let {
+        val update = tracker.update(reading, now) {
             s.tuning.resolveOctave(it.frequency.toDouble(), it.canBeOctaveLower, s.lockedCourse, s.a4.toDouble())
         }
-        if (!loud || f == null || f < MIN_FREQUENCY || f > MAX_FREQUENCY || now - onsetAt < ATTACK_SKIP_MS) {
-            if (s.frequency != null && now - lastHeardAt > HOLD_MS) {
-                resetHistory()
-                _state.update { it.copy(frequency = null) }
-            }
-            return
+        if (update.pluck) {
+            awaitingSecondPluck = false
+            captureWindow.clear()
         }
-        lastHeardAt = now
+        if (awaitingSecondPluck) return
 
-        // A jump of more than ~a semitone is a new note: drop the old history.
-        recent.lastOrNull()?.let { if (abs(centsBetween(f, it)) > 80) resetHistory() }
-        recent.addLast(f)
-        if (recent.size > MEDIAN_SIZE) recent.removeFirst()
-        val median = recent.sorted()[recent.size / 2]
+        if (update.lost) _state.update { it.copy(frequency = null) }
+        val frequency = update.frequency ?: return
+        _state.update { it.copy(frequency = frequency) }
 
-        // Exponential smoothing in cents, so the needle settles instead of jittering.
-        val next = smoothed?.let { it * 2.0.pow(SMOOTHING * centsBetween(median, it) / 1200) } ?: median
-        smoothed = next
-        _state.update { it.copy(frequency = next) }
-
-        if (s.mode == TunerMode.Course && s.firstString == null) captureFirstString(median)
+        if (s.mode == TunerMode.Course && s.firstString == null) captureFirstString(update.steady ?: frequency)
     }
 
     /** Takes the first string's pitch once enough consecutive readings agree within a few cents. */
@@ -208,13 +188,8 @@ class TunerViewModel : ViewModel() {
         val captured = captureWindow.sorted()[captureWindow.size / 2]
         _state.update { it.copy(firstString = captured, frequency = null) }
         awaitingSecondPluck = true
-        resetHistory()
-    }
-
-    private fun resetHistory() {
-        recent.clear()
-        smoothed = null
         captureWindow.clear()
+        tracker.reset()
     }
 
     override fun onCleared() {
@@ -224,14 +199,6 @@ class TunerViewModel : ViewModel() {
     companion object {
         private const val A4_MIN = 425
         private const val A4_MAX = 455
-        private const val MIN_FREQUENCY = 55.0
-        private const val MAX_FREQUENCY = 1200.0
-        private const val SILENCE_RMS = 0.008f
-        private const val HOLD_MS = 1500L
-        private const val MEDIAN_SIZE = 5
-        private const val ONSET_RATIO = 2f
-        private const val ATTACK_SKIP_MS = 150L
-        private const val SMOOTHING = 0.35
         private const val CAPTURE_READINGS = 12
         private const val CAPTURE_SPREAD_CENTS = 4.0
     }

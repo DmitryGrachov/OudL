@@ -5,7 +5,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import com.udl.oud.ui.TunerRoute
+import com.udl.oud.ui.OudApp
 import com.udl.oud.ui.theme.UdTheme
 
 class MainActivity : ComponentActivity() {
@@ -16,7 +16,7 @@ class MainActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
             UdTheme {
-                TunerRoute()
+                OudApp()
             }
         }
     }
