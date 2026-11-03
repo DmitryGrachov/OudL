@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -66,10 +68,23 @@ import com.udl.oud.ui.theme.InTuneGreen
 import kotlin.math.abs
 import kotlin.math.hypot
 
+/** The fretboard with all notes and layers. */
 @Composable
-fun FretboardRoute(vm: FretboardViewModel = viewModel()) {
+fun FretboardRoute() = BoardRoute(maqamMode = false)
+
+/** The same board showing one maqam at a time. */
+@Composable
+fun MaqamRoute() = BoardRoute(maqamMode = true)
+
+@Composable
+private fun BoardRoute(maqamMode: Boolean) {
+    // Each tab keeps its own board settings.
+    val vm: FretboardViewModel = viewModel(key = if (maqamMode) "maqam" else "fretboard")
     val mic = rememberMicPermission()
     val state by vm.state.collectAsStateWithLifecycle()
+    if (maqamMode && state.maqam == null) {
+        LaunchedEffect(Unit) { vm.setMaqam(Maqamat.all.first()) }
+    }
     if (mic.granted && state.live) {
         LifecycleResumeEffect(Unit) {
             @Suppress("MissingPermission")
@@ -77,24 +92,25 @@ fun FretboardRoute(vm: FretboardViewModel = viewModel()) {
             onPauseOrDispose { vm.stop() }
         }
     }
-    FretboardScreen(state, vm, needsMic = state.live && !mic.granted, onRequestMic = mic.request)
+    FretboardScreen(state, vm, maqamMode, needsMic = state.live && !mic.granted, onRequestMic = mic.request)
 }
 
 @Composable
 private fun FretboardScreen(
     state: FretboardUiState,
     vm: FretboardViewModel,
+    maqamMode: Boolean,
     needsMic: Boolean,
     onRequestMic: () -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 600.dp
         // On tablets the navigation rail already names the screen; the board needs the height.
-        Scaffold(topBar = { if (!wide) TopAppBar(title = { Text("Гриф") }) }) { padding ->
+        Scaffold(topBar = { if (!wide) TopAppBar(title = { Text(if (maqamMode) "Макамы" else "Гриф") }) }) { padding ->
             val content: @Composable (Modifier) -> Unit = { boardModifier ->
                 HeardBar(state, needsMic, onRequestMic, vm::setLive)
-                Options(state, vm)
-                MaqamBar(state, vm)
+                if (maqamMode) MaqamBar(state, vm)
+                Options(state, vm, maqamMode)
                 FretboardCanvas(state, onTap = vm::play, modifier = boardModifier)
             }
             if (wide) {
@@ -191,7 +207,7 @@ private fun CentsBar(cents: Double, modifier: Modifier) {
 }
 
 @Composable
-private fun Options(state: FretboardUiState, vm: FretboardViewModel) {
+private fun Options(state: FretboardUiState, vm: FretboardViewModel, maqamMode: Boolean) {
     FlowRow(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -202,15 +218,11 @@ private fun Options(state: FretboardUiState, vm: FretboardViewModel) {
                 FilterChip(state.labels == labels, onClick = { vm.setLabels(labels) }, label = { Text(title) })
             }
         Text("·", Modifier.align(Alignment.CenterVertically), color = MaterialTheme.colorScheme.outline)
-        // A maqam decides by itself which notes are shown.
-        val noMaqam = state.maqam == null
-        FilterChip(state.showAccidentals, onClick = vm::toggleAccidentals, label = { Text("♯ ♭") }, enabled = noMaqam)
-        FilterChip(
-            state.showQuarterTones,
-            onClick = vm::toggleQuarterTones,
-            label = { Text("Четвертитоны") },
-            enabled = noMaqam,
-        )
+        // A maqam decides by itself which notes are shown, so the note layers only make sense here.
+        if (!maqamMode) {
+            FilterChip(state.showAccidentals, onClick = vm::toggleAccidentals, label = { Text("♯ ♭") })
+            FilterChip(state.showQuarterTones, onClick = vm::toggleQuarterTones, label = { Text("Четвертитоны") })
+        }
         FilterChip(state.showFingers, onClick = vm::toggleFingers, label = { Text("Пальцы") })
         FilterChip(!state.bassOnTop, onClick = vm::flip, label = { Text("Бас снизу") })
         FilterChip(state.extended, onClick = vm::toggleExtended, label = { Text("Дальше шейки") })
@@ -465,18 +477,23 @@ private fun upperJinsColor(): Color =
 private fun MaqamBar(state: FretboardUiState, vm: FretboardViewModel) {
     Column(Modifier.fillMaxWidth()) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Макам", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
-            FilterChip(state.maqam == null, onClick = { vm.setMaqam(null) }, label = { Text("Все ноты") })
             Maqamat.all.forEach { maqam ->
                 FilterChip(state.maqam == maqam, onClick = { vm.setMaqam(maqam) }, label = { Text(maqam.name) })
             }
         }
         val maqam = state.maqam ?: return@Column
-        val notes = maqam.notes(state.maqamTonic)
+        val notes = state.maqamNotes ?: return@Column
         val scale = state.scale
         fun name(note: ScaleNote) = state.labelFor(Pitch(state.maqamTonic + note.offset), scale)
         val lowerColor = MaterialTheme.colorScheme.primary
         val upperColor = upperJinsColor()
+        val intervalColor = MaterialTheme.colorScheme.onSurfaceVariant
+
+        // Tonic to octave, written in the direction it is played.
+        val upNames = notes.map { name(it) to if (it.upper) upperColor else lowerColor } + (name(notes[0]) to lowerColor)
+        val upIntervals = maqam.intervals(state.descending)
+        val names = if (state.descending) upNames.reversed() else upNames
+        val intervals = if (state.descending) upIntervals.reversed() else upIntervals
 
         FlowRow(verticalArrangement = Arrangement.Center) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -487,19 +504,19 @@ private fun MaqamBar(state: FretboardUiState, vm: FretboardViewModel) {
                     style = MaterialTheme.typography.titleMedium,
                 )
                 TextButton(onClick = { vm.shiftTonic(1) }) { Text("+", fontSize = 20.sp) }
-                TextButton(onClick = vm::playScale) { Text("▶ Сыграть гамму") }
+                FilterChip(!state.descending, onClick = { vm.setDescending(false) }, label = { Text("↑ вверх") })
+                Spacer(Modifier.width(8.dp))
+                FilterChip(state.descending, onClick = { vm.setDescending(true) }, label = { Text("↓ вниз") })
+                TextButton(onClick = vm::playScale) { Text("▶ Сыграть") }
             }
             Text(
                 buildAnnotatedString {
-                    notes.forEachIndexed { i, note ->
-                        withStyle(SpanStyle(color = if (note.upper) upperColor else lowerColor, fontWeight = FontWeight.SemiBold)) {
-                            append(name(note))
-                        }
-                        withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
-                            append("  ${intervalLabel(maqam.intervals[i])}  ")
+                    names.forEachIndexed { i, (noteName, color) ->
+                        withStyle(SpanStyle(color = color, fontWeight = FontWeight.SemiBold)) { append(noteName) }
+                        if (i < intervals.size) {
+                            withStyle(SpanStyle(color = intervalColor)) { append("  ${intervalLabel(intervals[i])}  ") }
                         }
                     }
-                    withStyle(SpanStyle(color = lowerColor, fontWeight = FontWeight.SemiBold)) { append(name(notes[0])) }
                 },
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.align(Alignment.CenterVertically).padding(start = 16.dp),
@@ -512,7 +529,7 @@ private fun MaqamBar(state: FretboardUiState, vm: FretboardViewModel) {
 @Composable
 private fun AjnasSummary(state: FretboardUiState) {
     val maqam = state.maqam ?: return
-    val notes = maqam.notes(state.maqamTonic)
+    val notes = state.maqamNotes ?: return
     val scale = state.scale
     fun name(note: ScaleNote) = state.labelFor(Pitch(state.maqamTonic + note.offset), scale)
     val lowerColor = MaterialTheme.colorScheme.primary
@@ -522,8 +539,9 @@ private fun AjnasSummary(state: FretboardUiState) {
             withStyle(SpanStyle(color = lowerColor)) { append("${maqam.lower.name} на ${name(notes[0])}") }
             append("  +  ")
             withStyle(SpanStyle(color = upperColor)) {
-                append("${maqam.upper.name} на ${name(notes[maqam.ghammaz])}")
+                append("${maqam.upperJins(state.descending).name} на ${name(notes[maqam.ghammaz])}")
             }
+            if (state.descending && maqam.descent == null) append("  · вниз так же, как вверх")
             append("    ◎ тоника · играй — место подсветится")
         },
         style = MaterialTheme.typography.titleMedium,

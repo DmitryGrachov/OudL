@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.sp
 private enum class Destination(val title: String, val glyph: String) {
     Tuner("Тюнер", "♪"),
     Fretboard("Гриф", "≡"),
+    Maqamat("Макамы", "♮"),
 }
 
 /** Top-level screens: a side rail on tablets, a bottom bar on phones. */
@@ -32,6 +33,7 @@ fun OudApp() {
         when (current) {
             Destination.Tuner -> TunerRoute()
             Destination.Fretboard -> FretboardRoute()
+            Destination.Maqamat -> MaqamRoute()
         }
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {

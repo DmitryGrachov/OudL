@@ -40,6 +40,8 @@ data class FretboardUiState(
     val maqam: Maqam? = null,
     /** Tonic the maqam is built on, as a grid step (2 × MIDI). */
     val maqamTonic: Int = 0,
+    /** Show the maqam's descending form. */
+    val descending: Boolean = false,
     val frequency: Double? = null,
     val error: String? = null,
 ) {
@@ -48,7 +50,11 @@ data class FretboardUiState(
 
     /** Maqam degrees by pitch class (grid step mod 24), or null when no maqam is shown. */
     val scale: Map<Int, ScaleNote>?
-        get() = maqam?.notes(maqamTonic)?.associateBy { (maqamTonic + it.offset).mod(24) }
+        get() = maqamNotes?.associateBy { (maqamTonic + it.offset).mod(24) }
+
+    /** The maqam's degrees bottom-up in the chosen direction, or null when no maqam is shown. */
+    val maqamNotes: List<ScaleNote>?
+        get() = maqam?.notes(maqamTonic, descending)
 
     /** Where the heard note can be played, and its offset from the nearest grid pitch. */
     val heard: Pair<List<Position>, Double>?
@@ -116,18 +122,22 @@ class FretboardViewModel : ViewModel() {
     fun toggleExtended() = _state.update { it.copy(extended = !it.extended) }
     fun setOnlyCourse(course: Int?) = _state.update { it.copy(onlyCourse = course) }
 
-    fun setMaqam(maqam: Maqam?) = _state.update { it.copy(maqam = maqam, maqamTonic = maqam?.tonic ?: 0) }
+    fun setMaqam(maqam: Maqam?) =
+        _state.update { it.copy(maqam = maqam, maqamTonic = maqam?.tonic ?: 0, descending = false) }
+
+    fun setDescending(descending: Boolean) = _state.update { it.copy(descending = descending) }
 
     /** Moves the maqam to another tonic, [semitones] up or down. */
     fun shiftTonic(semitones: Int) = _state.update {
         it.copy(maqamTonic = (it.maqamTonic + semitones * 2).coerceIn(TONIC_MIN, TONIC_MAX))
     }
 
-    /** Plays the maqam up from its tonic to the octave. */
+    /** Plays the maqam from tonic to octave, or from the octave down in its descending form. */
     fun playScale() {
         val s = _state.value
-        val maqam = s.maqam ?: return
-        val steps = maqam.notes(s.maqamTonic).map { s.maqamTonic + it.offset } + (s.maqamTonic + 24)
+        val notes = s.maqamNotes ?: return
+        val up = notes.map { s.maqamTonic + it.offset } + (s.maqamTonic + 24)
+        val steps = if (s.descending) up.reversed() else up
         ignoreMicUntil = SystemClock.elapsedRealtime() + steps.size * SCALE_NOTE_MS + SCALE_TONE_MS
         tracker.reset()
         _state.update { it.copy(frequency = null) }

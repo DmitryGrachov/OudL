@@ -69,6 +69,13 @@ data class ScaleNote(
 )
 
 /**
+ * How a maqam comes down when that differs from going up: the upper jins on the ghammaz is
+ * replaced by another one, e.g. Rast descends through B♭ (Nahawand on G) instead of B½♭.
+ * [intervals] are still listed bottom-up from the tonic.
+ */
+data class Descent(val upper: Jins, val intervals: List<Int>)
+
+/**
  * A maqam as a lower jins on the tonic and an upper jins on the ghammaz (the second pillar
  * of the maqam), with [intervals] giving the whole ascending octave in quarter tones.
  */
@@ -81,20 +88,32 @@ data class Maqam(
     val ghammaz: Int,
     val upper: Jins,
     val intervals: List<Int>,
+    /** Descending form, or null when the maqam comes down the way it goes up. */
+    val descent: Descent? = null,
 ) {
     init {
-        require(intervals.size == 7 && intervals.sum() == 24) { "$name: an octave is 7 steps, 24 quarter tones" }
-        require(intervals.take(lower.intervals.size) == lower.intervals) { "$name: lower jins doesn't match" }
-        require(intervals.drop(ghammaz).take(upper.intervals.size) == upper.intervals) {
-            "$name: upper jins doesn't match"
-        }
+        checkOctave(intervals, upper)
+        descent?.let { checkOctave(it.intervals, it.upper) }
     }
 
+    private fun checkOctave(intervals: List<Int>, upper: Jins) {
+        require(intervals.size == 7 && intervals.sum() == 24) { "$name: an octave is 7 steps, 24 quarter tones" }
+        require(intervals.take(lower.intervals.size) == lower.intervals) { "$name: lower jins doesn't match" }
+        // The upper jins may reach past the octave; only the part inside it is checked.
+        val top = intervals.drop(ghammaz)
+        require(top.take(upper.intervals.size) == upper.intervals.take(top.size)) { "$name: upper jins doesn't match" }
+    }
+
+    fun upperJins(descending: Boolean): Jins = if (descending) descent?.upper ?: upper else upper
+
+    fun intervals(descending: Boolean): List<Int> = if (descending) descent?.intervals ?: intervals else intervals
+
     /**
-     * The seven degrees on [tonic], each spelled with the next letter after the previous one,
-     * so that e.g. Hijaz on D reads D E♭ F♯ G rather than D D♯ F♯ G.
+     * The seven degrees on [tonic], bottom-up, each spelled with the next letter after the
+     * previous one, so that e.g. Hijaz on D reads D E♭ F♯ G rather than D D♯ F♯ G.
      */
-    fun notes(tonic: Int = this.tonic): List<ScaleNote> {
+    fun notes(tonic: Int = this.tonic, descending: Boolean = false): List<ScaleNote> {
+        val intervals = intervals(descending)
         val tonicSpelling = Spelling.of(tonic)
         var offset = 0
         return (0 until 7).map { degree ->
@@ -111,11 +130,20 @@ data class Maqam(
 object Maqamat {
     val all = listOf(
         // Tonics follow the usual Arabic practice on an oud in C–C tuning.
-        Maqam("Раст", 96, Ajnas.Rast, 4, Ajnas.Rast, listOf(4, 3, 3, 4, 4, 3, 3)), // C3
+        Maqam(
+            "Раст", 96, Ajnas.Rast, 4, Ajnas.Rast, listOf(4, 3, 3, 4, 4, 3, 3), // C3
+            Descent(Ajnas.Nahawand, listOf(4, 3, 3, 4, 4, 2, 4)), // down through B♭
+        ),
         Maqam("Баяти", 100, Ajnas.Bayati, 3, Ajnas.Nahawand, listOf(3, 3, 4, 4, 2, 4, 4)), // D3
-        Maqam("Хиджаз", 100, Ajnas.Hijaz, 3, Ajnas.Rast, listOf(2, 6, 2, 4, 3, 3, 4)), // D3
+        Maqam(
+            "Хиджаз", 100, Ajnas.Hijaz, 3, Ajnas.Rast, listOf(2, 6, 2, 4, 3, 3, 4), // D3
+            Descent(Ajnas.Nahawand, listOf(2, 6, 2, 4, 2, 4, 4)), // down through B♭
+        ),
         Maqam("Саба", 100, Ajnas.Saba, 2, Ajnas.Hijaz, listOf(3, 3, 2, 6, 2, 4, 4)), // D3
-        Maqam("Нахаванд", 96, Ajnas.Nahawand, 4, Ajnas.Hijaz, listOf(4, 2, 4, 4, 2, 6, 2)), // C3
+        Maqam(
+            "Нахаванд", 96, Ajnas.Nahawand, 4, Ajnas.Hijaz, listOf(4, 2, 4, 4, 2, 6, 2), // C3
+            Descent(Ajnas.Kurd, listOf(4, 2, 4, 4, 2, 4, 4)), // down through B♭
+        ),
         Maqam("Курд", 100, Ajnas.Kurd, 3, Ajnas.Nahawand, listOf(2, 4, 4, 4, 2, 4, 4)), // D3
         Maqam("Аджам", 92, Ajnas.Ajam, 4, Ajnas.Ajam, listOf(4, 4, 2, 4, 4, 4, 2)), // B♭2
         Maqam("Сикях", 103, Ajnas.Sikah, 2, Ajnas.Rast, listOf(3, 4, 4, 3, 3, 4, 3)), // E½♭3

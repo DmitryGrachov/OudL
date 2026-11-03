@@ -43,6 +43,25 @@ class MaqamTest {
     @Test fun transposedRastOnG() =
         assertEquals("Соль Ля Си½♭ До Ре Ми Фа½♯", spelled("Раст", tonic = 110))
 
+    private fun descending(name: String): String {
+        val m = maqam(name)
+        return m.notes(m.tonic, descending = true).joinToString(" ") { it.spelling.label(NoteLabels.Solfege) }
+    }
+
+    @Test fun rastComesDownThroughBFlat() {
+        assertEquals("До Ре Ми½♭ Фа Соль Ля Си♭", descending("Раст"))
+        assertEquals("Нахаванд", maqam("Раст").upperJins(descending = true).name)
+    }
+
+    @Test fun hijazComesDownThroughBFlat() = assertEquals("Ре Ми♭ Фа♯ Соль Ля Си♭ До", descending("Хиджаз"))
+
+    @Test fun nahawandComesDownWithKurdOnTheFifth() {
+        assertEquals("До Ре Ми♭ Фа Соль Ля♭ Си♭", descending("Нахаванд"))
+        assertEquals("Курд", maqam("Нахаванд").upperJins(descending = true).name)
+    }
+
+    @Test fun bayatiComesDownTheWayItGoesUp() = assertEquals(spelled("Баяти"), descending("Баяти"))
+
     @Test fun ghammazStartsTheUpperJins() {
         val bayati = maqam("Баяти").notes()
         assertEquals(listOf(false, false, false, true, true, true, true), bayati.map { it.upper })
