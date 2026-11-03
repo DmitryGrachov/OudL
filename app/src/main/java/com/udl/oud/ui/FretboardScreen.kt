@@ -189,6 +189,7 @@ private fun Options(state: FretboardUiState, vm: FretboardViewModel) {
         FilterChip(state.showQuarterTones, onClick = vm::toggleQuarterTones, label = { Text("Четвертитоны") })
         FilterChip(state.showFingers, onClick = vm::toggleFingers, label = { Text("Пальцы") })
         FilterChip(!state.bassOnTop, onClick = vm::flip, label = { Text("Бас снизу") })
+        FilterChip(state.extended, onClick = vm::toggleExtended, label = { Text("Дальше шейки") })
         if (state.live) {
             Text("·", Modifier.align(Alignment.CenterVertically), color = MaterialTheme.colorScheme.outline)
             FilterChip(state.onlyCourse == null, onClick = { vm.setOnlyCourse(null) }, label = { Text("Любая струна") })
@@ -208,7 +209,13 @@ private fun Options(state: FretboardUiState, vm: FretboardViewModel) {
 }
 
 /** Where things go on the board: the nut at the left, courses in rows, real string-length spacing. */
-private class BoardGeometry(val size: Size, val courses: Int, val bassOnTop: Boolean, density: Density) {
+private class BoardGeometry(
+    val size: Size,
+    val courses: Int,
+    val bassOnTop: Boolean,
+    val maxCents: Int,
+    density: Density,
+) {
     private val leftPad = with(density) { 84.dp.toPx() }
     private val rightPad = with(density) { 28.dp.toPx() }
     private val verticalPad = with(density) { 20.dp.toPx() }
@@ -223,7 +230,7 @@ private class BoardGeometry(val size: Size, val courses: Int, val bassOnTop: Boo
     fun x(cents: Int): Float = if (cents == 0) {
         nutX - openOffset
     } else {
-        val full = Fretboard.distanceFraction(Fretboard.NECK_CENTS.toDouble())
+        val full = Fretboard.distanceFraction(maxCents.toDouble())
         (nutX + (endX - nutX) * Fretboard.distanceFraction(cents.toDouble()) / full).toFloat()
     }
 
@@ -238,7 +245,7 @@ private class BoardGeometry(val size: Size, val courses: Int, val bassOnTop: Boo
 @Composable
 private fun FretboardCanvas(state: FretboardUiState, onTap: (Position) -> Unit, modifier: Modifier) {
     val measurer = rememberTextMeasurer()
-    val positions = remember(state.tuning) { Fretboard.positions(state.tuning) }
+    val positions = remember(state.tuning, state.maxCents) { Fretboard.positions(state.tuning, state.maxCents) }
     val heard = state.heard
     val heardPositions = heard?.first?.toSet().orEmpty()
     val heardColor = if (heard != null && abs(heard.second) <= FretboardUiState.IN_TUNE_CENTS) {
@@ -246,8 +253,10 @@ private fun FretboardCanvas(state: FretboardUiState, onTap: (Position) -> Unit, 
     } else {
         MaterialTheme.colorScheme.tertiary
     }
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val colors = BoardColors(
-        wood = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFF3B2A1D) else Color(0xFFE2C9A0),
+        wood = if (dark) Color(0xFF3B2A1D) else Color(0xFFE2C9A0),
+        body = if (dark) Color(0xFF55402C) else Color(0xFFF0DDBA),
         nut = Color(0xFFEDE3CF),
         string = Color(0xFFC9B48F),
         guide = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
@@ -261,12 +270,15 @@ private fun FretboardCanvas(state: FretboardUiState, onTap: (Position) -> Unit, 
     )
 
     Canvas(
-        modifier.pointerInput(state.tuning, state.bassOnTop, state.showAccidentals, state.showQuarterTones) {
+        modifier.pointerInput(
+            state.tuning, state.bassOnTop, state.showAccidentals, state.showQuarterTones, state.maxCents,
+        ) {
             detectTapGestures { tap ->
                 val geometry = BoardGeometry(
                     Size(size.width.toFloat(), size.height.toFloat()),
                     state.tuning.courses.size,
                     state.bassOnTop,
+                    state.maxCents,
                     this,
                 )
                 val touchRadius = 30.dp.toPx()
@@ -277,8 +289,8 @@ private fun FretboardCanvas(state: FretboardUiState, onTap: (Position) -> Unit, 
             }
         },
     ) {
-        val geometry = BoardGeometry(size, state.tuning.courses.size, state.bassOnTop, this)
-        drawBoard(geometry, colors)
+        val geometry = BoardGeometry(size, state.tuning.courses.size, state.bassOnTop, state.maxCents, this)
+        drawBoard(geometry, colors, measurer)
         positions.forEach { p ->
             val lit = p in heardPositions
             if (state.isVisible(p) || lit) drawPosition(p, geometry, state, lit, colors, measurer)
@@ -288,6 +300,7 @@ private fun FretboardCanvas(state: FretboardUiState, onTap: (Position) -> Unit, 
 
 private class BoardColors(
     val wood: Color,
+    val body: Color,
     val nut: Color,
     val string: Color,
     val guide: Color,
@@ -300,21 +313,34 @@ private class BoardColors(
     val heard: Color,
 )
 
-private fun DrawScope.drawBoard(g: BoardGeometry, c: BoardColors) {
+private fun DrawScope.drawBoard(g: BoardGeometry, c: BoardColors, measurer: TextMeasurer) {
     drawRoundRect(
         c.wood,
         topLeft = Offset(g.nutX, 0f),
         size = Size(g.endX + 12.dp.toPx() - g.nutX, size.height),
         cornerRadius = CornerRadius(8.dp.toPx()),
     )
+    // Past the end of the neck the strings run over the soundboard.
+    if (g.maxCents > Fretboard.NECK_CENTS) {
+        val bodyX = g.x(Fretboard.NECK_CENTS) + (g.x(Fretboard.NECK_CENTS + 50) - g.x(Fretboard.NECK_CENTS)) / 2
+        drawRoundRect(
+            c.body,
+            topLeft = Offset(bodyX, 0f),
+            size = Size(g.endX + 12.dp.toPx() - bodyX, size.height),
+            cornerRadius = CornerRadius(8.dp.toPx()),
+        )
+        val title = measurer.measure("корпус", TextStyle(fontSize = 11.sp, color = c.guide.copy(alpha = 1f)))
+        drawText(title, topLeft = Offset(bodyX + 6.dp.toPx(), 2.dp.toPx()))
+    }
     // Faint lines at every semitone: there are no frets, but the eye needs a reference.
-    for (cents in 100..Fretboard.NECK_CENTS step 100) {
+    // Stronger at the fourth (end of first position) and the octave.
+    for (cents in 100..g.maxCents step 100) {
         val x = g.x(cents)
         drawLine(
             c.guide,
             Offset(x, 0f),
             Offset(x, size.height),
-            strokeWidth = (if (cents == 500) 2.dp else 1.dp).toPx(),
+            strokeWidth = (if (cents == 500 || cents == 1200) 2.dp else 1.dp).toPx(),
         )
     }
     drawLine(c.nut, Offset(g.nutX, 0f), Offset(g.nutX, size.height), strokeWidth = 6.dp.toPx())

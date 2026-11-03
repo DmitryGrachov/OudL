@@ -38,6 +38,18 @@ class FretboardTest {
         assertEquals(Pitch(114), onD.last().pitch) // A3, a fifth above
     }
 
+    @Test fun extendedRangeReachesTheOctave() {
+        val positions = Fretboard.positions(tuning, Fretboard.EXTENDED_CENTS)
+        assertEquals(6 * 25, positions.size)
+        assertEquals(Pitch(96), positions.filter { it.course == 0 }.last().pitch) // bass C2 course up to C3
+    }
+
+    @Test fun extendedRangeChangesOctaveCorrectionOnTheBassCourse() {
+        val c3 = Pitch(96).frequency(a4)
+        // Over the body, C3 is playable on the bass C course itself, so the reading is kept.
+        assertEquals(c3, Fretboard.resolveOctave(tuning, c3, true, a4, 0, Fretboard.EXTENDED_CENTS), 1e-9)
+    }
+
     @Test fun positionsGetCloserTowardsTheBody() {
         val first = Fretboard.distanceFraction(100.0)
         val sixth = Fretboard.distanceFraction(700.0) - Fretboard.distanceFraction(600.0)

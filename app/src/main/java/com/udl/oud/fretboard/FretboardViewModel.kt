@@ -29,6 +29,8 @@ data class FretboardUiState(
     val showFingers: Boolean = false,
     /** Bass course at the top, as the neck looks to the player holding the oud. */
     val bassOnTop: Boolean = true,
+    /** Show positions past the neck, over the body, up to the octave. */
+    val extended: Boolean = false,
     /** Light up what is being played. */
     val live: Boolean = true,
     /** Course the player says they are playing on; null means any. */
@@ -36,10 +38,13 @@ data class FretboardUiState(
     val frequency: Double? = null,
     val error: String? = null,
 ) {
+    val maxCents: Int
+        get() = if (extended) Fretboard.EXTENDED_CENTS else Fretboard.NECK_CENTS
+
     /** Where the heard note can be played, and its offset from the nearest grid pitch. */
     val heard: Pair<List<Position>, Double>?
         get() = frequency?.let {
-            Fretboard.matches(tuning, it, a4.toDouble(), showQuarterTones, onlyCourse)
+            Fretboard.matches(tuning, it, a4.toDouble(), showQuarterTones, onlyCourse, maxCents)
         }
 
     fun isVisible(position: Position): Boolean = when {
@@ -95,6 +100,7 @@ class FretboardViewModel : ViewModel() {
     fun toggleQuarterTones() = _state.update { it.copy(showQuarterTones = !it.showQuarterTones) }
     fun toggleFingers() = _state.update { it.copy(showFingers = !it.showFingers) }
     fun flip() = _state.update { it.copy(bassOnTop = !it.bassOnTop) }
+    fun toggleExtended() = _state.update { it.copy(extended = !it.extended) }
     fun setOnlyCourse(course: Int?) = _state.update { it.copy(onlyCourse = course) }
 
     /** Turning live mode off releases the microphone; the screen calls [start] again when it is on. */
@@ -118,7 +124,7 @@ class FretboardViewModel : ViewModel() {
         val s = _state.value
         val update = tracker.update(reading, now) {
             Fretboard.resolveOctave(
-                s.tuning, it.frequency.toDouble(), it.canBeOctaveLower, s.a4.toDouble(), s.onlyCourse,
+                s.tuning, it.frequency.toDouble(), it.canBeOctaveLower, s.a4.toDouble(), s.onlyCourse, s.maxCents,
             )
         }
         if (update.lost) _state.update { it.copy(frequency = null) }

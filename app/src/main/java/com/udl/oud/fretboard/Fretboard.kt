@@ -95,10 +95,14 @@ object Fretboard {
     /** The neck ends where the body starts, around a fifth above the open string. */
     const val NECK_CENTS = 700
 
-    /** Every quarter-tone position on every course, up to the end of the neck. */
-    fun positions(tuning: Tuning): List<Position> = tuning.courses.flatMapIndexed { course, open ->
-        (0..NECK_CENTS step 50).map { cents -> Position(course, cents, Pitch(open.midi * 2 + cents / 50)) }
-    }
+    /** Playing on over the body, up to the octave (half the string). */
+    const val EXTENDED_CENTS = 1200
+
+    /** Every quarter-tone position on every course, from the open string up to [maxCents]. */
+    fun positions(tuning: Tuning, maxCents: Int = NECK_CENTS): List<Position> =
+        tuning.courses.flatMapIndexed { course, open ->
+            (0..maxCents step 50).map { cents -> Position(course, cents, Pitch(open.midi * 2 + cents / 50)) }
+        }
 
     /** Distance from the nut as a fraction of the string length, where a note [cents] above open stops. */
     fun distanceFraction(cents: Double): Double = 1 - 2.0.pow(-cents / 1200)
@@ -113,10 +117,11 @@ object Fretboard {
         a4: Double,
         quarterTones: Boolean,
         onlyCourse: Int? = null,
+        maxCents: Int = NECK_CENTS,
     ): Pair<List<Position>, Double> {
         val pitch = Pitch.nearest(frequency, a4, quarterTones)
         val cents = 1200 * log2(frequency / pitch.frequency(a4))
-        val positions = positions(tuning).filter {
+        val positions = positions(tuning, maxCents).filter {
             it.pitch == pitch && (onlyCourse == null || it.course == onlyCourse)
         }
         return positions to cents
@@ -133,6 +138,7 @@ object Fretboard {
         canBeOctaveLower: Boolean,
         a4: Double,
         onlyCourse: Int?,
+        maxCents: Int = NECK_CENTS,
     ): Double {
         if (!canBeOctaveLower) return frequency
         val lower = frequency / 2
@@ -140,7 +146,7 @@ object Fretboard {
             val courses = onlyCourse?.let { listOf(tuning.courses[it]) } ?: tuning.courses
             return courses.any {
                 val above = 1200 * log2(f / it.frequency(a4))
-                above > -25 && above < NECK_CENTS + 25
+                above > -25 && above < maxCents + 25
             }
         }
         return if (!playable(frequency) && playable(lower)) lower else frequency
