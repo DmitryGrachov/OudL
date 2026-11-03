@@ -23,6 +23,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+/** A maqam on a tonic, kept to come back to after a modulation. */
+data class SayrStop(val scale: Scale, val tonic: Int)
+
 data class FretboardUiState(
     val tuning: Tuning = OudSettings.tuning.value,
     val a4: Int = OudSettings.a4.value,
@@ -50,6 +53,10 @@ data class FretboardUiState(
     val exercise: Drill? = null,
     /** Fretboard drill: light up the spot asked for, not just name it. */
     val drillHint: Boolean = false,
+    /** Show how the selected maqam unfolds: pillars on the board, path and modulations. */
+    val sayrOpen: Boolean = false,
+    /** Maqamat left by following modulations, most recent last, to step back through. */
+    val sayrTrail: List<SayrStop> = emptyList(),
     val frequency: Double? = null,
     val error: String? = null,
 ) {
@@ -145,8 +152,29 @@ class FretboardViewModel : ViewModel() {
 
     // Changing the scale, tonic or direction ends a drill: its notes no longer match.
 
+    /** Picking a scale by hand starts a fresh path: the modulation trail is dropped. */
     fun select(scale: Scale?) = _state.update {
-        it.copy(selected = scale, tonic = scale?.tonic ?: 0, descending = false, exercise = null)
+        it.copy(selected = scale, tonic = scale?.tonic ?: 0, descending = false, exercise = null, sayrTrail = emptyList())
+    }
+
+    fun toggleSayr() = _state.update { it.copy(sayrOpen = !it.sayrOpen) }
+
+    /** Follows a modulation from the sayr, remembering where it came from. */
+    fun modulate(maqam: Maqam, tonic: Int) = _state.update {
+        val from = it.selected ?: return@update it
+        it.copy(
+            selected = maqam,
+            tonic = tonic,
+            descending = false,
+            exercise = null,
+            sayrTrail = it.sayrTrail + SayrStop(from, it.tonic),
+        )
+    }
+
+    /** Returns to the maqam the last modulation left. */
+    fun modulateBack() = _state.update {
+        val stop = it.sayrTrail.lastOrNull() ?: return@update it
+        it.copy(selected = stop.scale, tonic = stop.tonic, descending = false, exercise = null, sayrTrail = it.sayrTrail.dropLast(1))
     }
 
     fun setDescending(descending: Boolean) = _state.update { it.copy(descending = descending, exercise = null) }

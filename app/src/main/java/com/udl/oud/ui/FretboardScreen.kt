@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
@@ -63,6 +64,9 @@ import com.udl.oud.fretboard.Fretboard
 import com.udl.oud.fretboard.FretboardUiState
 import com.udl.oud.fretboard.FretboardViewModel
 import com.udl.oud.fretboard.Maqam
+import com.udl.oud.fretboard.Maqamat
+import com.udl.oud.fretboard.Sayrs
+import com.udl.oud.fretboard.Spelling
 import com.udl.oud.fretboard.Scale
 import com.udl.oud.fretboard.ScaleGroup
 import com.udl.oud.fretboard.WesternScale
@@ -148,6 +152,7 @@ private fun FretboardScreen(
                     )
                 }
                 if (scaleMode) ScaleBar(state, vm, mode.groups)
+                if (scaleMode && state.sayrOpen) (state.selected as? Maqam)?.let { SayrPanel(state, vm, it) }
                 if (optionsOpen) Options(state, vm, scaleMode)
                 FretboardCanvas(state, onTap = vm::play, modifier = boardModifier)
             }
@@ -312,6 +317,9 @@ private class BoardGeometry(
     val bottom = size.height - verticalPad
     val rowHeight = (bottom - top) / courses
 
+    /** Dots and names shrink when rows get tight, so a busy screen never makes them overlap. */
+    val dotScale: Float = (rowHeight / with(density) { COMFORTABLE_ROW.toPx() }).coerceIn(MIN_DOT_SCALE, 1f)
+
     fun x(cents: Int): Float = if (cents == 0) {
         nutX - openOffset
     } else {
@@ -325,6 +333,12 @@ private class BoardGeometry(
     }
 
     fun center(p: Position) = Offset(x(p.cents), y(p.course))
+
+    private companion object {
+        /** Row height at which dots and names are drawn at full size. */
+        val COMFORTABLE_ROW = 64.dp
+        const val MIN_DOT_SCALE = 0.6f
+    }
 }
 
 @Composable
@@ -379,6 +393,16 @@ private fun FretboardCanvas(state: FretboardUiState, onTap: (Position) -> Unit, 
     ) {
         val geometry = BoardGeometry(size, state.tuning.courses.size, state.bassOnTop, state.maxCents, this)
         drawBoard(geometry, colors, measurer)
+        // With the sayr open the maqam's pillars get a ring: the ghammaz in the upper jins'
+        // colour, and the degree development starts from, when it isn't the tonic.
+        val maqam = state.selected as? Maqam
+        val sayr = maqam?.let { Sayrs.of(it) }
+        fun pillarRing(note: ScaleNote?): Color? = when {
+            !state.sayrOpen || maqam == null || note == null -> null
+            note.degree == maqam.ghammaz -> colors.upperJins
+            sayr != null && sayr.start != 0 && note.degree == sayr.start -> colors.quarter
+            else -> null
+        }
         // A scale drill shows every place for the due note; a fretboard drill shows its one
         // spot, and only when the hint is on — finding it is the exercise.
         val drill = state.exercise
@@ -403,7 +427,7 @@ private fun FretboardCanvas(state: FretboardUiState, onTap: (Position) -> Unit, 
                 // Open strings keep their names: they say which string is which.
                 val hidden = hideNames && highlight == null && p.cents > 0
                 val label = if (hidden) "" else state.labelFor(p.pitch, scale)
-                drawPosition(p, geometry, label, note, state.showFingers, highlight, colors, measurer)
+                drawPosition(p, geometry, label, note, state.showFingers, highlight, pillarRing(note), colors, measurer)
             }
         }
     }
@@ -481,6 +505,8 @@ private fun DrawScope.drawPosition(
     note: ScaleNote?,
     showFingers: Boolean,
     highlight: Color?,
+    /** Ring marking a pillar of the maqam's sayr, besides the tonic's own ring. */
+    pillar: Color?,
     c: BoardColors,
     measurer: TextMeasurer,
 ) {
@@ -492,9 +518,9 @@ private fun DrawScope.drawPosition(
         quarter -> 9.dp
         natural -> 15.dp
         else -> 12.dp
-    }.toPx()
+    }.toPx() * g.dotScale
 
-    if (highlight != null) drawCircle(highlight.copy(alpha = 0.3f), radius = radius + 12.dp.toPx(), center = center)
+    if (highlight != null) drawCircle(highlight.copy(alpha = 0.3f), radius = radius + 12.dp.toPx() * g.dotScale, center = center)
     val fill = when {
         highlight != null -> highlight
         note != null -> if (note.upper) c.upperJins else c.natural
@@ -504,14 +530,15 @@ private fun DrawScope.drawPosition(
     }
     drawCircle(fill, radius = radius, center = center)
     if (p.cents == 0) drawCircle(c.nut, radius = radius, center = center, style = Stroke(2.dp.toPx()))
-    if (note?.degree == 0) drawCircle(c.label, radius = radius + 4.dp.toPx(), center = center, style = Stroke(3.dp.toPx()))
+    val ring = if (note?.degree == 0) c.label else pillar
+    ring?.let { drawCircle(it, radius = radius + 4.dp.toPx() * g.dotScale, center = center, style = Stroke(3.dp.toPx() * g.dotScale)) }
 
     if (showFingers && !quarter) {
         p.finger?.let { finger ->
             val text = measurer.measure(
                 finger.toString(),
                 TextStyle(
-                    fontSize = 13.sp,
+                    fontSize = 13.sp * g.dotScale,
                     fontWeight = FontWeight.Bold,
                     color = if (natural || lit) c.onNatural else c.onAccidental,
                 ),
@@ -524,12 +551,12 @@ private fun DrawScope.drawPosition(
     val label = measurer.measure(
         text,
         TextStyle(
-            fontSize = if (quarter) 10.sp else 12.sp,
+            fontSize = (if (quarter) 10.sp else 12.sp) * g.dotScale,
             fontWeight = if (natural || lit) FontWeight.SemiBold else FontWeight.Normal,
             color = highlight ?: c.label,
         ),
     )
-    val gap = (if (note?.degree == 0) 7.dp else 3.dp).toPx()
+    val gap = (if (ring != null) 7.dp else 3.dp).toPx() * g.dotScale
     val labelY = if (quarter) center.y - radius - gap - label.size.height else center.y + radius + gap
     drawText(label, topLeft = Offset(center.x - label.size.width / 2f, labelY))
 }
@@ -611,6 +638,9 @@ private fun ScaleBar(state: FretboardUiState, vm: FretboardViewModel, groups: Li
                 FilterChip(state.descending, onClick = { vm.setDescending(true) }, label = { Text("↓ вниз") })
                 TextButton(onClick = vm::playScale) { Text("▶ Сыграть") }
                 TextButton(onClick = vm::startExercise) { Text("🎯 Упражнение") }
+                if (selected is Maqam) {
+                    FilterChip(state.sayrOpen, onClick = vm::toggleSayr, label = { Text("Сайр") })
+                }
             }
             Text(
                 buildAnnotatedString {
@@ -777,5 +807,67 @@ private fun ExercisePanel(
             },
             style = MaterialTheme.typography.titleMedium,
         )
+    }
+}
+
+/**
+ * How the selected maqam unfolds: its pillars (also ringed on the board), the usual path, and
+ * the usual modulations, each a button that moves the board to that maqam on that note.
+ */
+@Composable
+private fun SayrPanel(state: FretboardUiState, vm: FretboardViewModel, maqam: Maqam) {
+    val sayr = Sayrs.of(maqam)
+    val notes = state.selectedNotes ?: return
+    val degrees = state.degrees
+    fun name(degree: Int) = state.labelFor(Pitch(state.tonic + notes[degree].offset), degrees)
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val start = sayr?.start?.takeIf { it != 0 && it != maqam.ghammaz }
+
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            sayr?.path?.mapIndexed { i, step -> "${i + 1}. $step" }?.joinToString("   →   ")
+                ?: "Путь развития для этого макама пока не записан — опоры взяты из его строения.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = muted,
+        )
+        // Pillars and moves share one row to leave the board its height.
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                buildAnnotatedString {
+                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)) {
+                        append("◎ тоника ${name(0)}")
+                    }
+                    withStyle(SpanStyle(color = upperJinsColor(), fontWeight = FontWeight.SemiBold)) {
+                        append("   ◎ гаммаз ${name(maqam.ghammaz)}")
+                    }
+                    if (start != null) {
+                        withStyle(SpanStyle(color = MaterialTheme.colorScheme.tertiary, fontWeight = FontWeight.SemiBold)) {
+                            append("   ◎ центр ${name(start)}")
+                        }
+                    }
+                    append("     ")
+                },
+                Modifier.align(Alignment.CenterVertically),
+                style = MaterialTheme.typography.titleSmall,
+            )
+            val trail = state.sayrTrail.lastOrNull()
+            if (trail != null) {
+                TextButton(onClick = vm::modulateBack) {
+                    Text("← назад: ${trail.scale.name} на ${Spelling.of(trail.tonic).label(NoteLabels.Solfege)}")
+                }
+            }
+            val moves = sayr?.modulations.orEmpty().mapNotNull { m ->
+                Maqamat.all.firstOrNull { it.name == m.maqam }?.let { it to state.tonic + m.offset }
+            }
+            if (moves.isNotEmpty()) {
+                Text("Переходы:", Modifier.align(Alignment.CenterVertically), color = muted)
+                moves.forEach { (target, tonic) ->
+                    AssistChip(
+                        onClick = { vm.modulate(target, tonic) },
+                        label = { Text("→ ${target.name} на ${Spelling.of(tonic).label(NoteLabels.Solfege)}") },
+                    )
+                }
+            }
+        }
     }
 }
