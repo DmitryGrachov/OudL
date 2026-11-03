@@ -50,5 +50,6 @@ object Tunings {
     val all = listOf(
         Tuning("До-До", listOf(Note(36), Note(41), Note(45), Note(50), Note(55), Note(60))), // C2 F2 A2 D3 G3 C4
         Tuning("Ре-До", listOf(Note(38), Note(43), Note(45), Note(50), Note(55), Note(60))), // D2 G2 A2 D3 G3 C4
+        Tuning("Фа-Фа", listOf(Note(41), Note(45), Note(50), Note(55), Note(60), Note(65))), // F2 A2 D3 G3 C4 F4
     )
 }
