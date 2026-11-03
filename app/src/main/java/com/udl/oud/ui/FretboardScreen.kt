@@ -305,6 +305,7 @@ private fun FretboardCanvas(state: FretboardUiState, onTap: (Position) -> Unit, 
         quarter = MaterialTheme.colorScheme.tertiary,
         label = MaterialTheme.colorScheme.onSurface,
         heard = heardColor,
+        playing = if (dark) Color(0xFFFFF1D6) else Color(0xFFB4552A),
     )
 
     Canvas(
@@ -330,10 +331,16 @@ private fun FretboardCanvas(state: FretboardUiState, onTap: (Position) -> Unit, 
         val geometry = BoardGeometry(size, state.tuning.courses.size, state.bassOnTop, state.maxCents, this)
         drawBoard(geometry, colors, measurer)
         positions.forEach { p ->
-            val lit = p in heardPositions
-            if (state.isVisible(p, scale) || lit) {
+            // What the app is playing lights up just like what the mic hears, in its own colour.
+            val highlight = when {
+                p.pitch.step == state.playingStep -> colors.playing
+                p in heardPositions -> colors.heard
+                else -> null
+            }
+            if (state.isVisible(p, scale) || highlight != null) {
                 val note = scale?.get(p.pitch.step.mod(24))
-                drawPosition(p, geometry, state.labelFor(p.pitch, scale), note, state.showFingers, lit, colors, measurer)
+                val label = state.labelFor(p.pitch, scale)
+                drawPosition(p, geometry, label, note, state.showFingers, highlight, colors, measurer)
             }
         }
     }
@@ -353,6 +360,7 @@ private class BoardColors(
     val quarter: Color,
     val label: Color,
     val heard: Color,
+    val playing: Color,
 )
 
 private fun DrawScope.drawBoard(g: BoardGeometry, c: BoardColors, measurer: TextMeasurer) {
@@ -401,6 +409,7 @@ private fun DrawScope.drawBoard(g: BoardGeometry, c: BoardColors, measurer: Text
 /**
  * One spot on the board. With a maqam ([note] set) every degree is drawn full size, coloured by
  * the jins it belongs to, with a ring on the tonic; otherwise size and colour show the layer.
+ * A [highlight] (heard or being played) overrides the colour and adds a halo.
  */
 private fun DrawScope.drawPosition(
     p: Position,
@@ -408,22 +417,23 @@ private fun DrawScope.drawPosition(
     text: String,
     note: ScaleNote?,
     showFingers: Boolean,
-    lit: Boolean,
+    highlight: Color?,
     c: BoardColors,
     measurer: TextMeasurer,
 ) {
+    val lit = highlight != null
     val center = g.center(p)
-    val quarter = p.pitch.isQuarterTone && note == null
-    val natural = p.pitch.isNatural || note != null
+    val quarter = p.pitch.isQuarterTone && note == null && !lit
+    val natural = p.pitch.isNatural || note != null || lit
     val radius = when {
         quarter -> 9.dp
         natural -> 15.dp
         else -> 12.dp
     }.toPx()
 
-    if (lit) drawCircle(c.heard.copy(alpha = 0.3f), radius = radius + 12.dp.toPx(), center = center)
+    if (highlight != null) drawCircle(highlight.copy(alpha = 0.3f), radius = radius + 12.dp.toPx(), center = center)
     val fill = when {
-        lit -> c.heard
+        highlight != null -> highlight
         note != null -> if (note.upper) c.upperJins else c.natural
         quarter -> c.quarter
         natural -> c.natural
@@ -453,7 +463,7 @@ private fun DrawScope.drawPosition(
         TextStyle(
             fontSize = if (quarter) 10.sp else 12.sp,
             fontWeight = if (natural || lit) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (lit) c.heard else c.label,
+            color = highlight ?: c.label,
         ),
     )
     val gap = (if (note?.degree == 0) 7.dp else 3.dp).toPx()
@@ -491,9 +501,13 @@ private fun MaqamBar(state: FretboardUiState, vm: FretboardViewModel) {
 
         // Tonic to octave, written in the direction it is played.
         val upNames = notes.map { name(it) to if (it.upper) upperColor else lowerColor } + (name(notes[0]) to lowerColor)
+        val upSteps = notes.map { state.maqamTonic + it.offset } + (state.maqamTonic + 24)
         val upIntervals = maqam.intervals(state.descending)
         val names = if (state.descending) upNames.reversed() else upNames
+        val steps = if (state.descending) upSteps.reversed() else upSteps
         val intervals = if (state.descending) upIntervals.reversed() else upIntervals
+        val playingColor = MaterialTheme.colorScheme.onPrimary
+        val playingBackground = MaterialTheme.colorScheme.onSurface
 
         FlowRow(verticalArrangement = Arrangement.Center) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -512,7 +526,13 @@ private fun MaqamBar(state: FretboardUiState, vm: FretboardViewModel) {
             Text(
                 buildAnnotatedString {
                     names.forEachIndexed { i, (noteName, color) ->
-                        withStyle(SpanStyle(color = color, fontWeight = FontWeight.SemiBold)) { append(noteName) }
+                        // The note sounding right now is marked here as well as on the board.
+                        val style = if (steps[i] == state.playingStep) {
+                            SpanStyle(color = playingColor, background = playingBackground, fontWeight = FontWeight.Bold)
+                        } else {
+                            SpanStyle(color = color, fontWeight = FontWeight.SemiBold)
+                        }
+                        withStyle(style) { append(" $noteName ") }
                         if (i < intervals.size) {
                             withStyle(SpanStyle(color = intervalColor)) { append("  ${intervalLabel(intervals[i])}  ") }
                         }

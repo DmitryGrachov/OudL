@@ -42,6 +42,8 @@ data class FretboardUiState(
     val maqamTonic: Int = 0,
     /** Show the maqam's descending form. */
     val descending: Boolean = false,
+    /** Grid pitch the app is sounding right now (a tapped note or a scale), to light it up. */
+    val playingStep: Int? = null,
     val frequency: Double? = null,
     val error: String? = null,
 ) {
@@ -86,6 +88,7 @@ class FretboardViewModel : ViewModel() {
     private val tracker = PitchTracker()
     private var listenJob: Job? = null
     private var scaleJob: Job? = null
+    @Volatile private var playRun = 0
     private var ignoreMicUntil = 0L
 
     init {
@@ -137,15 +140,32 @@ class FretboardViewModel : ViewModel() {
         val s = _state.value
         val notes = s.maqamNotes ?: return
         val up = notes.map { s.maqamTonic + it.offset } + (s.maqamTonic + 24)
-        val steps = if (s.descending) up.reversed() else up
-        ignoreMicUntil = SystemClock.elapsedRealtime() + steps.size * SCALE_NOTE_MS + SCALE_TONE_MS
+        playSequence(if (s.descending) up.reversed() else up, SCALE_NOTE_MS, SCALE_TONE_MS)
+    }
+
+    /**
+     * Plays grid pitches one after another, [noteMs] apart, each ringing for [toneMs], and marks
+     * the one sounding in [FretboardUiState.playingStep] so the board can light it up.
+     */
+    private fun playSequence(steps: List<Int>, noteMs: Long, toneMs: Long) {
+        val a4 = _state.value.a4.toDouble()
+        // Don't light up the speaker's own tone as if it were played on the oud.
+        ignoreMicUntil = SystemClock.elapsedRealtime() + steps.size * noteMs + toneMs
         tracker.reset()
         _state.update { it.copy(frequency = null) }
         scaleJob?.cancel()
+        // A cancelled run must not clear the highlight of the run that replaced it.
+        val run = ++playRun
         scaleJob = viewModelScope.launch(Dispatchers.Default) {
-            steps.forEach { step ->
-                tone.play(Pitch(step).frequency(s.a4.toDouble()), SCALE_TONE_MS.toInt())
-                delay(SCALE_NOTE_MS)
+            try {
+                steps.forEach { step ->
+                    _state.update { it.copy(playingStep = step) }
+                    tone.play(Pitch(step).frequency(a4), toneMs.toInt())
+                    delay(noteMs)
+                }
+                delay(HIGHLIGHT_TAIL_MS)
+            } finally {
+                if (run == playRun) _state.update { it.copy(playingStep = null) }
             }
         }
     }
@@ -156,14 +176,8 @@ class FretboardViewModel : ViewModel() {
         if (!live) stop()
     }
 
-    fun play(position: Position) {
-        val frequency = position.pitch.frequency(_state.value.a4.toDouble())
-        // Don't light up the speaker's own tone.
-        ignoreMicUntil = SystemClock.elapsedRealtime() + ReferenceTone.DURATION_MS + 200
-        tracker.reset()
-        _state.update { it.copy(frequency = null) }
-        viewModelScope.launch(Dispatchers.Default) { tone.play(frequency) }
-    }
+    fun play(position: Position) =
+        playSequence(listOf(position.pitch.step), SINGLE_NOTE_MS, ReferenceTone.DURATION_MS.toLong())
 
     private fun onReading(reading: PitchReading) {
         val now = SystemClock.elapsedRealtime()
@@ -187,5 +201,7 @@ class FretboardViewModel : ViewModel() {
         const val TONIC_MAX = 120 // C4
         const val SCALE_NOTE_MS = 550L
         const val SCALE_TONE_MS = 900L
+        const val SINGLE_NOTE_MS = 900L
+        const val HIGHLIGHT_TAIL_MS = 300L
     }
 }
