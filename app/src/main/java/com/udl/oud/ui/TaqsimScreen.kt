@@ -51,10 +51,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.udl.oud.fretboard.Fretboard
 import com.udl.oud.fretboard.Maqamat
 import com.udl.oud.fretboard.NoteLabels
+import com.udl.oud.fretboard.Pitch
 import com.udl.oud.fretboard.StaffNote
+import com.udl.oud.taqsim.AnswerLevel
+import com.udl.oud.taqsim.AnswerPhase
 import com.udl.oud.taqsim.JinsGrammars
 import com.udl.oud.taqsim.Station
 import com.udl.oud.taqsim.TaqsimLength
+import com.udl.oud.taqsim.TaqsimMode
 import com.udl.oud.taqsim.TaqsimNote
 import com.udl.oud.taqsim.TaqsimTempo
 import com.udl.oud.taqsim.TaqsimUiState
@@ -87,10 +91,20 @@ fun TaqsimRoute(vm: TaqsimViewModel = viewModel()) {
                     .padding(horizontal = if (wide) 24.dp else 16.dp, vertical = 8.dp),
             ) {
                 if (state.exercise != null) RepeatBar(state, vm) else TaqsimHeardBar(state, vm, mic.granted)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Режим", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
+                    TaqsimMode.entries.forEach { m ->
+                        FilterChip(state.mode == m, onClick = { vm.setMode(m) }, label = { Text(m.title) })
+                    }
+                }
                 MaqamPicker(state, vm)
-                TaqsimControls(state, vm)
-                PhraseStrip(state, vm)
-                PhraseDetail(state, vm)
+                if (state.mode == TaqsimMode.Listen) {
+                    TaqsimControls(state, vm)
+                    PhraseStrip(state, vm)
+                    PhraseDetail(state, vm)
+                } else {
+                    AnswerPanel(state, vm)
+                }
                 Row(Modifier.fillMaxWidth().height(if (wide) 360.dp else 300.dp).padding(top = 8.dp)) {
                     TaqsimBoard(state, Modifier.weight(1f).fillMaxHeight())
                     TaqsimStaff(state, Modifier.width(staffWidth).fillMaxHeight().padding(start = 8.dp))
@@ -352,3 +366,99 @@ private fun TaqsimStaff(state: TaqsimUiState, modifier: Modifier) {
     NoteStaff(note, name, color, hint = "записано октавой выше звука", octaveClef = true, modifier = modifier)
 }
 
+
+/**
+ * Answer mode: the app plays a question; the player answers with a phrase of their own that
+ * comes to rest on the asked note; then the four checks and the app's own answer to compare.
+ */
+@Composable
+private fun AnswerPanel(state: TaqsimUiState, vm: TaqsimViewModel) {
+    val q = state.question ?: return
+    val a = state.answer ?: return
+    val question = state.taqsim.phrases[q]
+    val answer = state.taqsim.phrases[a]
+    val station = answer.station
+    val grammar = JinsGrammars.of(station.jins)
+    val target = answer.notes.last()
+    val colour = grammar.characteristic.map { station.spelling(it + station.jinsRoot).label(NoteLabels.Solfege) }
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Вопрос", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
+            AnswerLevel.entries.forEach { l ->
+                FilterChip(state.answerLevel == l, onClick = { vm.setAnswerLevel(l) }, label = { Text(l.title) })
+            }
+            Text("·", Modifier.align(Alignment.CenterVertically), color = MaterialTheme.colorScheme.outline)
+            TaqsimTempo.entries.forEach { t ->
+                FilterChip(state.tempo == t, onClick = { vm.setTempo(t) }, label = { Text(t.title) })
+            }
+        }
+        Text(
+            buildAnnotatedString {
+                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
+                    append("Задача: ответь фразой в джинсе ${station.jins.name} и приди на ${noteName(target)}.")
+                }
+                withStyle(SpanStyle(color = muted)) {
+                    append("  Вопрос стоит на ${question.station.name} и останавливается на ${noteName(question.notes.last())}. ")
+                    append("Цветная ступень: ${colour.joinToString()}. ${grammar.about}")
+                }
+            },
+            style = MaterialTheme.typography.titleSmall,
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            when {
+                state.playing -> Button(onClick = vm::stop) { Text("■ Стоп") }
+                state.phase == AnswerPhase.Listening -> Button(onClick = vm::finishAnswer) { Text("✋ Готово") }
+                else -> Button(onClick = vm::playQuestion) {
+                    Text(if (state.phase == AnswerPhase.Idle) "▶ Задать вопрос" else "▶ Вопрос ещё раз")
+                }
+            }
+            TextButton(onClick = vm::playExample, enabled = !state.playing) { Text("💡 Пример ответа") }
+            TextButton(onClick = { vm.nextQuestion() }) { Text("➡ Следующий вопрос") }
+        }
+        Text(
+            when (state.phase) {
+                AnswerPhase.Idle -> "Нажми «Задать вопрос», послушай — и отвечай на уде."
+                AnswerPhase.Question -> "Слушай вопрос…"
+                AnswerPhase.Listening -> "Твоя очередь: играй ответ. После паузы я его разберу (или нажми «Готово»)."
+                AnswerPhase.Done -> "Разбор ответа:"
+            },
+            style = MaterialTheme.typography.titleMedium,
+            color = if (state.phase == AnswerPhase.Listening) MaterialTheme.colorScheme.primary else muted,
+        )
+        // The answer so far, each note green in the maqam, orange outside it.
+        if (state.answerNotes.isNotEmpty()) {
+            val verdict = state.verdict
+            Text(
+                buildAnnotatedString {
+                    state.answerNotes.forEachIndexed { i, n ->
+                        val outside = verdict?.outside?.contains(i) ?: false
+                        withStyle(
+                            SpanStyle(
+                                color = if (outside) MaterialTheme.colorScheme.tertiary else InTuneGreen,
+                                fontWeight = FontWeight.SemiBold,
+                            ),
+                        ) { append(" ${Pitch(n.step).label(NoteLabels.Solfege)} ") }
+                    }
+                },
+                style = MaterialTheme.typography.titleLarge,
+            )
+        }
+        state.verdict?.let { v ->
+            v.points.forEach { p ->
+                Text(
+                    "${if (p.passed) "✓" else "✗"}  ${p.text}",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (p.passed) InTuneGreen else MaterialTheme.colorScheme.tertiary,
+                )
+            }
+            if (v.points.size == 4) {
+                Text(
+                    if (v.passed == 4) "Отличный ответ! Попробуй следующий вопрос или ответь иначе." else "${v.passed} из 4. Послушай пример и попробуй ещё раз.",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}

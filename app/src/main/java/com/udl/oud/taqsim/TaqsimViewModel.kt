@@ -38,7 +38,31 @@ enum class TaqsimTempo(val title: String, val pulseMs: Double) {
     VerySlow("Совсем медленно", 380.0),
 }
 
+/** Listen to a whole taqsim, or answer its questions yourself. */
+enum class TaqsimMode(val title: String) {
+    Listen("Слушать"),
+    Answer("Ответь"),
+}
+
+/** Where the question is asked: low (answer comes home to the tonic) or high (to the ghammaz). */
+enum class AnswerLevel(val title: String, val section: SectionKind?) {
+    Low("Внизу: ответ на тонику", SectionKind.Opening),
+    High("Наверху: ответ на гаммаз", SectionKind.Upper),
+    Any("Где угодно", null),
+}
+
+enum class AnswerPhase { Idle, Question, Listening, Done }
+
 data class TaqsimUiState(
+    val mode: TaqsimMode = TaqsimMode.Listen,
+    val answerLevel: AnswerLevel = AnswerLevel.Low,
+    /** The question phrase and the answer that follows it in [taqsim]. */
+    val question: Int? = null,
+    val answer: Int? = null,
+    val phase: AnswerPhase = AnswerPhase.Idle,
+    /** Notes heard so far in the player's answer. */
+    val answerNotes: List<HeardNote> = emptyList(),
+    val verdict: AnswerVerdict? = null,
     val maqam: Maqam = Maqamat.all.first(),
     val length: TaqsimLength = TaqsimLength.Medium,
     val tempo: TaqsimTempo = TaqsimTempo.Normal,
@@ -67,7 +91,9 @@ data class TaqsimUiState(
     val playingPhrase: Int? get() = playingNote?.let { phraseOfNote.getOrNull(it) }
 
     /** The phrase to show: the one sounding, else the one picked, else the first. */
-    val shownPhrase: Int get() = playingPhrase ?: drillPhrase?.takeIf { exercise != null } ?: selected ?: 0
+    val shownPhrase: Int
+        get() = playingPhrase ?: drillPhrase?.takeIf { exercise != null }
+            ?: answer?.takeIf { mode == TaqsimMode.Answer } ?: selected ?: 0
 
     val playingTone: TaqsimNote? get() = playingNote?.let { taqsim.notes.getOrNull(it) }
 
@@ -194,7 +220,80 @@ class TaqsimViewModel : ViewModel() {
     fun restartRepeat() = _state.value.drillPhrase?.let(::startRepeat)
     fun stopRepeat() = _state.update { it.copy(exercise = null, drillPhrase = null) }
 
-    private fun playRange(phrases: IntRange, loop: Boolean) {
+    // --- Answer mode: the app asks, the player answers. ---
+
+    fun setMode(mode: TaqsimMode) {
+        stop()
+        _state.update { it.copy(mode = mode, exercise = null, drillPhrase = null, phase = AnswerPhase.Idle, verdict = null, answerNotes = emptyList()) }
+        if (mode == TaqsimMode.Answer) nextQuestion(play = false)
+    }
+
+    fun setAnswerLevel(level: AnswerLevel) {
+        _state.update { it.copy(answerLevel = level) }
+        nextQuestion(play = false)
+    }
+
+    /**
+     * A fresh question: a new taqsim, and in it a question phrase of the chosen kind with the
+     * answer that follows it, kept as the example.
+     */
+    fun nextQuestion(play: Boolean = true) {
+        stop()
+        val s = _state.value
+        var pair: Pair<Int, Int>? = null
+        var taqsim = s.taqsim
+        // A medium taqsim always has a low and a high question; try a few seeds to be sure.
+        repeat(8) {
+            if (pair != null) return@repeat
+            taqsim = TaqsimGenerator(System.nanoTime()).generate(s.maqam, TaqsimLength.Medium)
+            val questions = taqsim.phrases.indices.filter { i ->
+                val p = taqsim.phrases[i]
+                p.role == PhraseRole.Question && (s.answerLevel.section == null || p.section == s.answerLevel.section) &&
+                    taqsim.phrases.getOrNull(i + 1)?.role == PhraseRole.Answer
+            }
+            questions.randomOrNull()?.let { pair = it to it + 1 }
+        }
+        val (q, a) = pair ?: return
+        _state.update {
+            it.copy(
+                taqsim = taqsim, question = q, answer = a, selected = null, live = true,
+                phase = AnswerPhase.Idle, verdict = null, answerNotes = emptyList(),
+            )
+        }
+        if (play) playQuestion()
+    }
+
+    /** Plays the question, then listens for the answer. */
+    fun playQuestion() {
+        val q = _state.value.question ?: return
+        _state.update { it.copy(phase = AnswerPhase.Question, verdict = null, answerNotes = emptyList()) }
+        playRange(q..q, loop = false) {
+            collector = NoteCollector(_state.value.a4.toDouble())
+            _state.update { it.copy(phase = AnswerPhase.Listening) }
+        }
+    }
+
+    /** The generator's own answer, to compare. */
+    fun playExample() {
+        val a = _state.value.answer ?: return
+        val back = _state.value.phase
+        playRange(a..a, loop = false) { _state.update { it.copy(phase = back) } }
+    }
+
+    /** Ends the answer now instead of waiting for the pause. */
+    fun finishAnswer() {
+        val s = _state.value
+        val a = s.answer ?: return
+        val notes = collector?.finish().orEmpty()
+        collector = null
+        val station = s.taqsim.phrases[a].station
+        val target = s.taqsim.phrases[a].notes.last().degree
+        _state.update { it.copy(phase = AnswerPhase.Done, answerNotes = notes, verdict = AnswerCheck.evaluate(notes, station, target)) }
+    }
+
+    private var collector: NoteCollector? = null
+
+    private fun playRange(phrases: IntRange, loop: Boolean, onFinished: (() -> Unit)? = null) {
         stop()
         val s = _state.value
         val pulse = s.tempo.pulseMs
@@ -243,6 +342,7 @@ class TaqsimViewModel : ViewModel() {
             ignoreMicUntil = SystemClock.elapsedRealtime() + MIC_GRACE_MS
             tracker.reset()
             _state.update { it.copy(playing = false, playingNote = null) }
+            onFinished?.invoke()
         }
     }
 
@@ -259,6 +359,17 @@ class TaqsimViewModel : ViewModel() {
         }
         if (update.lost) _state.update { it.copy(frequency = null) }
         update.frequency?.let { f -> _state.update { it.copy(frequency = f) } }
+        // Answer mode: gather the notes played; a pause of [END_PAUSE_MS] ends the answer.
+        val c = collector
+        if (s.phase == AnswerPhase.Listening && c != null) {
+            if (update.pluck) c.pluck()
+            update.steady?.let { c.steady(it, now) }
+            if (update.lost) c.silence()
+            if (c.notes.size != s.answerNotes.size) _state.update { it.copy(answerNotes = c.notes) }
+            // A stray sound in a quiet room is not an answer: wait for a couple of real notes first.
+            if (c.notes.size >= 2 && now - c.lastSoundAt > END_PAUSE_MS) finishAnswer()
+            return
+        }
         if (update.pluck) {
             awaitingPluck = false
             steady.reset()
@@ -281,5 +392,6 @@ class TaqsimViewModel : ViewModel() {
         const val TAIL_MS = 1200.0
         const val LOOP_PAUSE_MS = 900L
         const val MIC_GRACE_MS = 600L
+        const val END_PAUSE_MS = 2200L
     }
 }
