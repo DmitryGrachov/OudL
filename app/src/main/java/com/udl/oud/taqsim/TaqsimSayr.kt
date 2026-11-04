@@ -65,7 +65,10 @@ object TaqsimSayrs {
     }
 
     /** The sections of one taqsim on [maqam] at its usual tonic. */
-    fun plan(maqam: Maqam, length: TaqsimLength, random: Random, tonic: Int = maqam.tonic): List<Section> {
+    /** A plan: the form chosen and the sections in order. */
+    data class Plan(val form: TaqsimForm, val sections: List<Section>)
+
+    fun plan(maqam: Maqam, length: TaqsimLength, random: Random, tonic: Int = maqam.tonic): Plan {
         val s = Stations(maqam, tonic)
         val g = maqam.ghammaz
         val sections = mutableListOf<Section>()
@@ -74,35 +77,64 @@ object TaqsimSayrs {
         }
         val target = length.phrases.random(random)
         val wantsPeak = length != TaqsimLength.Short || random.nextDouble() < 0.3
+        val form = TaqsimForm.choose(length, s.modulations.size, random)
 
-        // Opening: settle on the centre, then a question and its answer.
-        add(
-            SectionKind.Opening, s.lower,
-            PhraseRole.Open to s.lower.focus,
-            PhraseRole.Question to s.lowerQuestion,
-            PhraseRole.Answer to s.lower.focus,
-        )
+        // Opening: settle on the centre with a question and its answer; some forms arrive there
+        // from the ghammaz or from above first.
+        when (form.opening) {
+            TaqsimForm.Opening.Low -> add(SectionKind.Opening, s.lower, PhraseRole.Open to s.lower.focus)
+            TaqsimForm.Opening.Ghammaz -> {
+                add(SectionKind.Opening, s.ghammaz, PhraseRole.Open to g)
+                add(SectionKind.Opening, s.lower, PhraseRole.Descend to s.lower.focus)
+            }
+            TaqsimForm.Opening.Above -> {
+                add(SectionKind.Opening, s.upper, PhraseRole.Open to g)
+                add(SectionKind.Opening, s.lower, PhraseRole.Descend to s.lower.focus)
+            }
+        }
+        add(SectionKind.Opening, s.lower, PhraseRole.Question to s.lowerQuestion, PhraseRole.Answer to s.lower.focus)
         if (length == TaqsimLength.Long) add(SectionKind.Opening, s.lower, PhraseRole.Develop to s.lower.focus)
 
-        add(SectionKind.Ghammaz, s.ghammaz, PhraseRole.Climb to g)
-
-        val upperParts = mutableListOf(PhraseRole.Develop to g)
-        if (length != TaqsimLength.Short) upperParts += listOf(PhraseRole.Question to minOf(g + 2, s.upper.high), PhraseRole.Answer to g)
-        add(SectionKind.Upper, s.upper, *upperParts.toTypedArray())
-
-        if (wantsPeak) add(SectionKind.Peak, s.peak, PhraseRole.Climb to 7, PhraseRole.Descend to g)
-
-        // A written sayr may step aside to one of its modulations (two in a long taqsim) and come back.
-        val moves = s.modulations.shuffled(random).take(
-            when (length) {
-                TaqsimLength.Short -> if (random.nextDouble() < 0.3) 1 else 0
-                TaqsimLength.Medium -> 1
-                TaqsimLength.Long -> 2
-            },
-        )
-        moves.forEach { m ->
+        val moves = s.modulations.shuffled(random).take(form.moves(length, random))
+        fun move(i: Int) = moves.getOrNull(i)?.let { m ->
             val parts = if (length == TaqsimLength.Long) arrayOf(PhraseRole.Develop to 0, PhraseRole.Answer to 0) else arrayOf(PhraseRole.Develop to 0)
             add(SectionKind.Modulation, m, *parts)
+        }
+        fun upper(full: Boolean) {
+            val parts = mutableListOf(PhraseRole.Develop to g)
+            if (full && length != TaqsimLength.Short) parts += listOf(PhraseRole.Question to minOf(g + 2, s.upper.high), PhraseRole.Answer to g)
+            add(SectionKind.Upper, s.upper, *parts.toTypedArray())
+        }
+        fun peak() = if (wantsPeak) add(SectionKind.Peak, s.peak, PhraseRole.Climb to 7, PhraseRole.Descend to g) else Unit
+
+        add(SectionKind.Ghammaz, s.ghammaz, PhraseRole.Climb to g)
+        when (form.middle) {
+            TaqsimForm.Middle.Straight -> {
+                upper(full = true)
+                peak()
+                move(0)
+            }
+            TaqsimForm.Middle.Revisit -> {
+                upper(full = false)
+                // Back down to where it started, a new question and answer, then up again.
+                add(SectionKind.Revisit, s.lower, PhraseRole.Question to s.lowerQuestion, PhraseRole.Answer to s.lower.focus)
+                add(SectionKind.Ghammaz, s.ghammaz, PhraseRole.Climb to g)
+                peak()
+                move(0)
+            }
+            TaqsimForm.Middle.EarlyMove -> {
+                move(0)
+                upper(full = true)
+                peak()
+            }
+            TaqsimForm.Middle.TwoMoves -> {
+                upper(full = true)
+                move(0)
+                // Home in the maqam between the two modulations.
+                upper(full = false)
+                move(1)
+                peak()
+            }
         }
 
         add(SectionKind.Return, s.back, PhraseRole.Descend to g)
@@ -121,6 +153,53 @@ object TaqsimSayrs {
         }
 
         add(SectionKind.Qafla, s.qafla, PhraseRole.Cadence to 0)
-        return sections
+        return Plan(form, sections)
+    }
+}
+
+/**
+ * The shape of a taqsim's course: how it opens and what happens in the middle. Players don't
+ * always climb straight from the tonic: some open at the ghammaz or from above and come down,
+ * some go back to the start before rising again, modulate early, or move away twice.
+ */
+enum class TaqsimForm(val title: String, val opening: Opening, val middle: Middle, private val weight: Double) {
+    Classic("снизу вверх", Opening.Low, Middle.Straight, 3.0),
+    FromGhammaz("начало с гаммаза", Opening.Ghammaz, Middle.Straight, 1.5),
+    FromAbove("начало сверху, спуск к тонике", Opening.Above, Middle.Straight, 1.2),
+    Revisit("с возвращением к началу посередине", Opening.Low, Middle.Revisit, 1.5),
+    EarlyMove("ранний переход", Opening.Low, Middle.EarlyMove, 1.2),
+    GhammazAndBack("с гаммаза, с возвращением", Opening.Ghammaz, Middle.Revisit, 0.8),
+    TwoMoves("два перехода", Opening.Low, Middle.TwoMoves, 1.2),
+    ;
+
+    enum class Opening { Low, Ghammaz, Above }
+    enum class Middle { Straight, Revisit, EarlyMove, TwoMoves }
+
+    /** How many modulations this form takes. */
+    fun moves(length: TaqsimLength, random: Random): Int = when {
+        middle == Middle.TwoMoves -> 2
+        middle == Middle.EarlyMove -> 1
+        length == TaqsimLength.Short -> if (random.nextDouble() < 0.3) 1 else 0
+        else -> 1
+    }
+
+    companion object {
+        /** A form that fits the length and the modulations the maqam has. */
+        fun choose(length: TaqsimLength, modulations: Int, random: Random): TaqsimForm {
+            val fits = entries.filter { f ->
+                when {
+                    f.middle == Middle.TwoMoves -> modulations >= 2 && length != TaqsimLength.Short
+                    f.middle == Middle.EarlyMove -> modulations >= 1
+                    f.middle == Middle.Revisit -> length != TaqsimLength.Short
+                    else -> true
+                }
+            }
+            var r = random.nextDouble() * fits.sumOf { it.weight }
+            for (f in fits) {
+                r -= f.weight
+                if (r <= 0) return f
+            }
+            return fits.first()
+        }
     }
 }

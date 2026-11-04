@@ -6,37 +6,100 @@ import kotlin.math.abs
 import kotlin.random.Random
 
 /**
- * Builds a taqsim from rules: the sayr plan gives the sections; each phrase is assembled from
- * the jins' motifs and changed the way players change them (sequence a step lower, inversion,
- * truncation, repeating the question's opening in the answer), led to its resting note, and
- * the best of many tries by the style rules is kept. The same [seed] gives the same taqsim.
+ * Builds a taqsim from rules: the sayr plan gives the form and the sections; a theme is chosen
+ * and carried through them; each phrase is assembled from the jins' motifs and changed the way
+ * players change them (sequence a step lower, inversion, truncation, repeating the question's
+ * opening in the answer), led to its resting note, and the best of many tries by the style rules
+ * is kept. The same [seed] gives the same taqsim.
  */
 class TaqsimGenerator(private val seed: Long) {
     private val random = Random(seed)
 
     fun generate(maqam: Maqam, length: TaqsimLength, tonic: Int = maqam.tonic): Taqsim {
         val plan = TaqsimSayrs.plan(maqam, length, random, tonic)
+        val theme = makeTheme(maqam)
         val phrases = mutableListOf<TaqsimPhrase>()
-        var lastStep = plan.first().station.step(plan.first().station.focus)
+        var lastStep = plan.sections.first().station.step(plan.sections.first().station.focus)
         var question: List<Int>? = null
-        for (section in plan) {
+        for (section in plan.sections) {
             section.roles.forEachIndexed { i, role ->
                 val station = section.station
                 val from = station.degreeNear(lastStep).coerceIn(station.low, station.high)
-                val draft = bestPhrase(section, role, section.endsOn[i], from, phrases.lastOrNull(), question)
+                val themeUse = themeFor(theme, section.kind, role, phrases.count { it.themeNotes.isNotEmpty() })
+                val draft = bestPhrase(section, role, section.endsOn[i], from, phrases.lastOrNull(), question, themeUse)
                 if (role == PhraseRole.Question) question = draft.degrees
                 if (role == PhraseRole.Answer) question = null
-                val beats = Timing.beats(draft.degrees, role, section.kind, station, random)
+                val themeBeats = draft.theme.withIndex().associate { (k, index) -> index to theme.rhythm[k % theme.rhythm.size] }
+                val beats = Timing.beats(draft.degrees, role, section.kind, station, random, themeBeats)
                 val notes = draft.degrees.mapIndexed { n, d -> TaqsimNote(station.step(d), station.spelling(d), d, beats[n]) }
-                phrases += TaqsimPhrase(section.kind, role, station, draft.how, notes, Timing.rest(section.kind, role, random))
+                phrases += TaqsimPhrase(
+                    section.kind, role, station, draft.how, notes, Timing.rest(section.kind, role, random), draft.theme.toSet(),
+                )
                 lastStep = notes.last().step
             }
         }
-        return Taqsim(maqam, seed, phrases, TaqsimSayrs.isDetailed(maqam))
+        return Taqsim(maqam, seed, phrases, TaqsimSayrs.isDetailed(maqam), plan.form, theme)
     }
 
-    /** A phrase being built: degrees in the station's scale and how it was made. */
-    data class Draft(val degrees: List<Int>, val how: String)
+    /** A phrase being built: degrees in the station's scale, how it was made, which notes are the theme. */
+    data class Draft(val degrees: List<Int>, val how: String, val theme: List<Int> = emptyList())
+
+    /** How the theme is brought into one phrase: its notes (from the jins' root) and what was done to it. */
+    data class ThemeUse(val shape: List<Int>, val name: String)
+
+    // --- The theme ---
+
+    /**
+     * The theme: one of the lower jins' own motifs (its colour is in it), four to six notes,
+     * with a rhythm of its own that makes it recognisable when it comes back: a held first
+     * note, a figure of short notes or a dotted pair, a longer last note.
+     */
+    private fun makeTheme(maqam: Maqam): Theme {
+        val grammar = JinsGrammars.of(maqam.lower)
+        val pool = grammar.motifs.filter { MotifUse.Open in it.uses || MotifUse.Develop in it.uses }.ifEmpty { grammar.motifs }
+        val motif = pool.random(random)
+        var shape = motif.degrees
+        while (shape.size < 4) shape = shape + (shape.last() + if (shape.last() > 0) -1 else 1)
+        shape = shape.take(6)
+        val cells = listOf(listOf(0.6, 0.6), listOf(1.0), listOf(0.9, 0.45), listOf(0.5, 0.5, 1.0))
+        val rhythm = mutableListOf(random.nextDouble(1.4, 2.0))
+        while (rhythm.size < shape.size - 1) rhythm += cells.random(random)
+        while (rhythm.size > shape.size - 1) rhythm.removeAt(rhythm.lastIndex)
+        rhythm += 1.6
+        return Theme("«${motif.name}»", shape, rhythm)
+    }
+
+    /**
+     * Whether this phrase brings the theme back, and how: stated plainly at the start, in the
+     * new colour of the upper jins or a modulation, in sequence, inverted on the way down, or
+     * a fragment of it in the qafla. Kept for a few phrases so it stays a theme.
+     */
+    private fun themeFor(theme: Theme, kind: SectionKind, role: PhraseRole, heard: Int): ThemeUse? {
+        val chance = when {
+            kind == SectionKind.Opening && role == PhraseRole.Open -> 0.95
+            kind == SectionKind.Opening && role == PhraseRole.Question -> if (heard == 0) 0.8 else 0.2
+            kind == SectionKind.Upper && role == PhraseRole.Develop -> 0.7
+            kind == SectionKind.Modulation && role == PhraseRole.Develop -> 0.65
+            kind == SectionKind.Peak && role == PhraseRole.Climb -> 0.45
+            kind == SectionKind.Revisit && role == PhraseRole.Question -> 0.5
+            kind == SectionKind.Ghammaz -> 0.3
+            kind == SectionKind.Return -> 0.3
+            kind == SectionKind.Qafla -> 0.5
+            else -> 0.15
+        } * if (heard >= 6) 0.4 else 1.0
+        if (random.nextDouble() >= chance) return null
+        val s = theme.shape
+        return when {
+            kind == SectionKind.Qafla -> ThemeUse(s.take(3), "обрывок темы")
+            kind == SectionKind.Return && random.nextDouble() < 0.4 -> ThemeUse(s.map { 2 * s.first() - it }, "тема в обращении")
+            (kind == SectionKind.Upper || kind == SectionKind.Modulation) && random.nextDouble() < 0.3 ->
+                ThemeUse(s + s.map { it - 1 }, "тема с секвенцией вниз")
+            kind == SectionKind.Modulation -> ThemeUse(s, "тема в новом макаме")
+            kind == SectionKind.Upper || kind == SectionKind.Peak -> ThemeUse(s, "тема наверху, в цвете верхнего джинса")
+            heard == 0 -> ThemeUse(s, "тема таксима ${theme.name}")
+            else -> ThemeUse(s, "снова тема")
+        }
+    }
 
     private fun bestPhrase(
         section: Section,
@@ -45,13 +108,17 @@ class TaqsimGenerator(private val seed: Long) {
         from: Int,
         previous: TaqsimPhrase?,
         question: List<Int>?,
+        theme: ThemeUse?,
     ): Draft {
         val station = section.station
         val grammar = JinsGrammars.of(station.jins)
-        val candidates = (0 until TRIES).mapNotNull { draft(station, grammar, role, end, from, question) }
+        val candidates = (0 until TRIES).mapNotNull { draft(station, grammar, role, end, from, question, theme) }
             .filter { StyleRules.allowed(it.degrees, station) }
             .distinctBy { it.degrees }
-        if (candidates.isEmpty()) return fallback(station, from, end)
+        if (candidates.isEmpty()) {
+            // The theme doesn't fit here: build the phrase without it.
+            return if (theme != null) bestPhrase(section, role, end, from, previous, question, null) else fallback(station, from, end)
+        }
         // A little noise on the score: near-equal tries take turns instead of the same one winning.
         val scored = candidates.map { it to StyleRules.score(it.degrees, station, grammar, role, end, previous, question) + random.nextDouble(-NOISE, NOISE) }
             .sortedByDescending { it.second }
@@ -66,32 +133,61 @@ class TaqsimGenerator(private val seed: Long) {
         return pool.first().first
     }
 
-    /** One attempt: an opening, one to three motifs moved and changed, then the way to [end]. */
-    private fun draft(station: Station, grammar: JinsGrammar, role: PhraseRole, end: Int, from: Int, question: List<Int>?): Draft? {
+    /** One attempt: an opening, the theme if it comes here, motifs moved and changed, then the way to [end]. */
+    private fun draft(
+        station: Station,
+        grammar: JinsGrammar,
+        role: PhraseRole,
+        end: Int,
+        from: Int,
+        question: List<Int>?,
+        theme: ThemeUse?,
+    ): Draft? {
         val notes = mutableListOf<Int>()
+        val isTheme = mutableListOf<Boolean>()
+        fun add(d: Int, t: Boolean = false) {
+            notes += d
+            isTheme += t
+        }
         val how = mutableListOf<String>()
         val root = station.jinsRoot
 
         // The answer takes up the question's opening and then goes its own way.
         if (role == PhraseRole.Answer && question != null && question.size >= 4) {
             val keep = random.nextInt(2, minOf(4, question.size - 1) + 1)
-            notes += question.take(keep)
+            question.take(keep).forEach { add(it) }
             how += "начало как в вопросе"
         } else {
-            notes += from
+            add(from)
             if (role == PhraseRole.Open && random.nextDouble() < 0.5 && from - 1 >= station.low) {
                 notes.add(0, from - 1)
+                isTheme.add(0, false)
             }
         }
 
-        val motifCount = when (role) {
-            PhraseRole.Open, PhraseRole.Cadence -> random.nextInt(1, 3)
+        // The theme, placed on the jins' root or next to where the line is, kept inside the range.
+        if (theme != null) {
+            var shift = if (random.nextDouble() < 0.6) root else notes.last() - theme.shape.first()
+            val low = theme.shape.min() + shift
+            val high = theme.shape.max() + shift
+            if (low < station.low) shift += station.low - low
+            if (high > station.high) shift -= high - station.high
+            val placed = theme.shape.map { it + shift }
+            // When the line already stands on the theme's first note, that note becomes part of it.
+            if (connect(notes, isTheme, placed.first())) isTheme[isTheme.lastIndex] = true else add(placed.first(), t = true)
+            placed.drop(1).forEach { add(it, t = true) }
+            how += theme.name
+        }
+
+        val motifCount = when {
+            theme != null -> random.nextInt(0, 2)
+            role == PhraseRole.Open || role == PhraseRole.Cadence -> random.nextInt(1, 3)
             else -> random.nextInt(1, 4)
         }
         repeat(motifCount) { k ->
             val last = k == motifCount - 1
             val use = when {
-                k == 0 && role == PhraseRole.Open -> MotifUse.Open
+                k == 0 && theme == null && role == PhraseRole.Open -> MotifUse.Open
                 last && (role == PhraseRole.Cadence || role == PhraseRole.Answer || end == root) -> MotifUse.Close
                 else -> MotifUse.Develop
             }
@@ -117,30 +213,36 @@ class TaqsimGenerator(private val seed: Long) {
             val here = notes.last()
             val shift = if (random.nextDouble() < 0.5) root else here - shape.first() + listOf(-1, 0, 1).random(random)
             val placed = shape.map { it + shift }
-            connect(notes, placed.first())
-            notes += placed
+            val joined = connect(notes, isTheme, placed.first())
+            placed.drop(if (joined) 1 else 0).forEach { add(it) }
             how += name
         }
 
-        approach(notes, end, JinsGrammars.of(station.jins).fromAbove)
-        // Same note twice in a row is held, not repeated, unless it is a motif's own repeat.
-        val merged = notes.fold(mutableListOf<Int>()) { acc, d -> if (acc.size >= 2 && acc.last() == d && acc[acc.size - 2] == d) acc else acc.apply { add(d) } }
+        approach(notes, isTheme, end, JinsGrammars.of(station.jins).fromAbove)
+        // Same note three times running is held, not repeated: drop the third.
+        val keep = notes.indices.filter { i -> !(i >= 2 && notes[i] == notes[i - 1] && notes[i] == notes[i - 2]) }
+        val merged = keep.map { notes[it] }
         if (merged.size < 3 || merged.size > MAX_NOTES) return null
-        return Draft(merged, how.joinToString(", "))
+        val themeAt = keep.indices.filter { isTheme[keep[it]] }
+        return Draft(merged, how.joinToString(", "), themeAt)
     }
 
-    /** Steps from the line's last note to [target], so motifs join without jumps. */
-    private fun connect(notes: MutableList<Int>, target: Int) {
+    /**
+     * Steps from the line's last note towards [target], so motifs join without jumps. True when
+     * the line ends on [target] itself: the motif then starts on that note instead of repeating it.
+     */
+    private fun connect(notes: MutableList<Int>, isTheme: MutableList<Boolean>, target: Int): Boolean {
         var d = notes.last()
         while (abs(target - d) > 2) {
             d += if (target > d) 1 else -1
             notes += d
+            isTheme += false
         }
-        if (notes.last() == target) notes.removeAt(notes.lastIndex)
+        return notes.last() == target
     }
 
     /** Leads to [end]: stepwise, often through the note above (or below) it, as the jins does. */
-    private fun approach(notes: MutableList<Int>, end: Int, fromAbove: Double) {
+    private fun approach(notes: MutableList<Int>, isTheme: MutableList<Boolean>, end: Int, fromAbove: Double) {
         if (notes.last() == end) return
         val above = random.nextDouble() < fromAbove
         val via = if (above) end + 1 else end - 1
@@ -149,8 +251,12 @@ class TaqsimGenerator(private val seed: Long) {
         while (d != target) {
             d += if (target > d) 1 else -1
             notes += d
+            isTheme += false
         }
-        if (notes.last() != end) notes += end
+        if (notes.last() != end) {
+            notes += end
+            isTheme += false
+        }
     }
 
     private fun pick(motifs: List<Motif>): Motif? {
@@ -166,7 +272,8 @@ class TaqsimGenerator(private val seed: Long) {
     /** When no try passes the rules: a plain stepwise line to the resting note. */
     private fun fallback(station: Station, from: Int, end: Int): Draft {
         val notes = mutableListOf(from)
-        approach(notes, end, 0.5)
+        val flags = mutableListOf(false)
+        approach(notes, flags, end, 0.5)
         if (notes.size < 3) notes.add(0, (from + 1).coerceAtMost(station.high))
         return Draft(notes, "простой ход к ${station.spelling(end).label(NoteLabels.Solfege)}")
     }
@@ -238,20 +345,30 @@ object StyleRules {
 
 /**
  * Free rhythm in beats of the base pulse: runs go quick, the colour note and the first note
- * may linger, the resting note at the end is long, the last qafla longest; a little rubato.
+ * may linger, the resting note at the end is long, the last qafla longest; the theme keeps its
+ * own rhythm wherever it comes; a little rubato over all.
  */
 object Timing {
-    fun beats(degrees: List<Int>, role: PhraseRole, kind: SectionKind, station: Station, random: Random): List<Double> {
+    fun beats(
+        degrees: List<Int>,
+        role: PhraseRole,
+        kind: SectionKind,
+        station: Station,
+        random: Random,
+        theme: Map<Int, Double> = emptyMap(),
+    ): List<Double> {
         val colour = JinsGrammars.of(station.jins).characteristic.map { it + station.jinsRoot }
         return degrees.mapIndexed { i, d ->
             val base = when {
                 i == degrees.lastIndex -> if (kind == SectionKind.Qafla) 8.0 else random.nextDouble(3.0, 5.5)
+                i in theme -> theme.getValue(i)
                 i == 0 && (role == PhraseRole.Open || random.nextDouble() < 0.25) -> random.nextDouble(1.5, 3.0)
                 d in colour && random.nextDouble() < 0.35 -> random.nextDouble(1.5, 2.2)
                 inRun(degrees, i) -> 0.7
                 else -> 1.0
             }
-            base * random.nextDouble(0.9, 1.1)
+            // The theme's own rhythm gets less rubato, so it stays recognisable.
+            base * if (i in theme) random.nextDouble(0.95, 1.05) else random.nextDouble(0.9, 1.1)
         }
     }
 

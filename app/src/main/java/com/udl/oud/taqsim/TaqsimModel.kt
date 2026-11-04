@@ -48,6 +48,7 @@ enum class SectionKind(val title: String) {
     Ghammaz("Подъём к гаммазу"),
     Upper("Развитие наверху"),
     Peak("Кульминация"),
+    Revisit("Снова у начала"),
     Modulation("Переход"),
     Return("Возвращение"),
     Qafla("Кафла"),
@@ -90,6 +91,8 @@ data class TaqsimPhrase(
     val how: String,
     val notes: List<TaqsimNote>,
     val restBeats: Double,
+    /** Indices of the notes that state the taqsim's theme here, if it is heard in this phrase. */
+    val themeNotes: Set<Int> = emptySet(),
 ) {
     val beats: Double get() = notes.sumOf { it.beats } + restBeats
 }
@@ -100,8 +103,28 @@ enum class TaqsimLength(val title: String, val phrases: IntRange) {
     Long("Длинный", 15..18),
 }
 
-/** A whole taqsim: phrases in order; [detailed] says whether the sayr is a written one or the basic one. */
-data class Taqsim(val maqam: Maqam, val seed: Long, val phrases: List<TaqsimPhrase>, val detailed: Boolean) {
+/**
+ * The taqsim's theme: a short motif with its own rhythm, stated at the start and brought back
+ * through the sayr — in the upper jins, in a modulation, at the octave — changed each time.
+ */
+data class Theme(val name: String, val shape: List<Int>, val rhythm: List<Double>) {
+    init {
+        require(shape.size == rhythm.size && shape.size in 3..7)
+    }
+}
+
+/** A whole taqsim: phrases in order, the form of its course, and the theme carried through it. */
+data class Taqsim(
+    val maqam: Maqam,
+    val seed: Long,
+    val phrases: List<TaqsimPhrase>,
+    val detailed: Boolean,
+    val form: TaqsimForm = TaqsimForm.Classic,
+    val theme: Theme? = null,
+) {
+    /** Phrases where the theme is heard. */
+    val themePhrases: List<Int> get() = phrases.indices.filter { phrases[it].themeNotes.isNotEmpty() }
+
     val notes: List<TaqsimNote> get() = phrases.flatMap { it.notes }
     val beats: Double get() = phrases.sumOf { it.beats }
 }

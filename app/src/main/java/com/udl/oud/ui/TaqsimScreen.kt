@@ -41,6 +41,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -204,6 +205,7 @@ private fun TaqsimControls(state: TaqsimUiState, vm: TaqsimViewModel) {
         Text("·", Modifier.align(Alignment.CenterVertically), color = MaterialTheme.colorScheme.outline)
         OrnamentChips(state, vm)
     }
+    TaqsimOutline(state)
 }
 
 /** Skeleton, or with ornaments: the same phrase, plain or as a player would decorate it. */
@@ -223,7 +225,8 @@ private fun PhraseStrip(state: TaqsimUiState, vm: TaqsimViewModel) {
             FilterChip(
                 selected = sounding || state.selected == i,
                 onClick = { vm.selectPhrase(i) },
-                label = { Text("${i + 1}. ${p.section.title} · ${p.role.title}") },
+                // ♦ marks the phrases where the theme comes back.
+                label = { Text("${if (p.themeNotes.isNotEmpty()) "♦ " else ""}${i + 1}. ${p.section.title} · ${p.role.title}") },
                 colors = if (sounding) {
                     FilterChipDefaults.filterChipColors(
                         selectedContainerColor = MaterialTheme.colorScheme.primary,
@@ -279,7 +282,9 @@ private fun PhraseDetail(state: TaqsimUiState, vm: TaqsimViewModel) {
                             else -> SpanStyle(color = MaterialTheme.colorScheme.onSurface)
                         }
                         val o = ornaments[start + i]
-                        withStyle(style) {
+                        // The theme's notes are underlined, so it can be followed through the taqsim.
+                        val styled = if (i in phrase.themeNotes) style.copy(textDecoration = TextDecoration.Underline) else style
+                        withStyle(styled) {
                             append(" ")
                             // A grace note is written small before its note, the other signs after it.
                             if (o?.kind == OrnamentKind.GraceAbove || o?.kind == OrnamentKind.GraceBelow) {
@@ -490,4 +495,25 @@ private fun AnswerPanel(state: TaqsimUiState, vm: TaqsimViewModel) {
             }
         }
     }
+}
+
+/** The taqsim as a whole: the form of its course and the theme, with where it comes back. */
+@Composable
+private fun TaqsimOutline(state: TaqsimUiState) {
+    val t = state.taqsim
+    val theme = t.theme
+    Text(
+        buildAnnotatedString {
+            withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append("Форма: ") }
+            append(t.form.title)
+            if (theme != null && t.themePhrases.isNotEmpty()) {
+                withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append("   ·   ♦ Тема: ") }
+                append(theme.name)
+                append(" — во фразах ${t.themePhrases.joinToString { (it + 1).toString() }}, ноты темы подчёркнуты")
+            }
+        },
+        Modifier.padding(top = 4.dp),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
 }

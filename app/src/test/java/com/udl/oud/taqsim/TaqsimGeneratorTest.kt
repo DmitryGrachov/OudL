@@ -100,8 +100,49 @@ class TaqsimGeneratorTest {
         assertTrue(seeds.any { s -> TaqsimGenerator(s).generate(rast, TaqsimLength.Medium).phrases.any { it.section == SectionKind.Modulation } })
         val saba = Maqamat.all.first { it.name == "Саба" }
         seeds.forEach { s ->
-            val first = TaqsimGenerator(s).generate(saba, TaqsimLength.Medium).phrases.first()
-            assertEquals(2, first.notes.last().degree) // Saba settles on its third degree, F
+            // However it opens, the opening's answer settles on Saba's third degree, F.
+            val answer = TaqsimGenerator(s).generate(saba, TaqsimLength.Medium).phrases
+                .first { it.section == SectionKind.Opening && it.role == PhraseRole.Answer }
+            assertEquals(2, answer.notes.last().degree)
+        }
+    }
+
+    @Test fun theThemeOpensTheTaqsimAndComesBack() {
+        Maqamat.all.forEach { m ->
+            val withTheme = seeds.map { TaqsimGenerator(it).generate(m, TaqsimLength.Medium) }
+            // Heard in at least three phrases in most taqasim, and nearly always in the opening.
+            assertTrue(m.name, withTheme.count { it.themePhrases.size >= 3 } >= seeds.count() * 0.6)
+            assertTrue(m.name, withTheme.count { t -> t.themePhrases.any { t.phrases[it].section == SectionKind.Opening } } >= seeds.count() * 0.8)
+        }
+    }
+
+    @Test fun theThemeKeepsItsRhythm() {
+        val t = (0L until 200L).map { TaqsimGenerator(it).generate(Maqamat.all.first { m -> m.name == "Раст" }, TaqsimLength.Medium) }
+            .first { it.themePhrases.size >= 2 }
+        val theme = t.theme!!
+        t.themePhrases.forEach { pi ->
+            val p = t.phrases[pi]
+            p.themeNotes.sorted().withIndex().filter { (_, i) -> i != p.notes.lastIndex }.forEach { (k, i) ->
+                assertEquals(theme.rhythm[k % theme.rhythm.size], p.notes[i].beats, theme.rhythm[k % theme.rhythm.size] * 0.06)
+            }
+        }
+    }
+
+    @Test fun formsVary() {
+        val m = Maqamat.all.first { it.name == "Баяти" }
+        val forms = seeds.map { TaqsimGenerator(it).generate(m, TaqsimLength.Medium).form }.toSet()
+        assertTrue("$forms", forms.size >= 5)
+        // A form that opens from the ghammaz really starts there.
+        seeds.map { TaqsimGenerator(it).generate(m, TaqsimLength.Medium) }.filter { it.form == TaqsimForm.FromGhammaz }.forEach {
+            assertEquals(m.ghammaz, it.phrases.first().notes.last().degree)
+        }
+    }
+
+    @Test fun twoMovesMeansTwoModulations() {
+        val m = Maqamat.all.first { it.name == "Раст" }
+        seeds.map { TaqsimGenerator(it).generate(m, TaqsimLength.Medium) }.filter { it.form == TaqsimForm.TwoMoves }.forEach { t ->
+            val stations = t.phrases.filter { it.section == SectionKind.Modulation }.map { it.station.name }.toSet()
+            assertEquals(2, stations.size)
         }
     }
 
