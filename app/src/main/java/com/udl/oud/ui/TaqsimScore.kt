@@ -50,7 +50,7 @@ fun TaqsimScoreDialog(state: TaqsimUiState, vm: TaqsimViewModel, onDismiss: () -
             Column(Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
-                        "Ноты таксима: ${state.maqam.name}",
+                        "Ноты таксима: ${state.title}",
                         Modifier.weight(1f),
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,

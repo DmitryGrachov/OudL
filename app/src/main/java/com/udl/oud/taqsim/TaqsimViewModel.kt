@@ -15,7 +15,13 @@ import com.udl.oud.fretboard.Maqam
 import com.udl.oud.fretboard.Maqamat
 import com.udl.oud.fretboard.Pitch
 import com.udl.oud.fretboard.SteadyNote
+import com.udl.oud.tuner.Ahenk
 import com.udl.oud.tuner.OudSettings
+import com.udl.oud.tuner.OudType
+import com.udl.oud.turkish.TurkishMakam
+import com.udl.oud.turkish.TurkishMakams
+import com.udl.oud.turkish.TurkishTaqsim
+import kotlin.math.pow
 import com.udl.oud.tuner.Tuning
 import com.udl.oud.tuner.centsBetween
 import kotlinx.coroutines.Dispatchers
@@ -70,6 +76,10 @@ data class TaqsimUiState(
     val freeReview: FreeReview? = null,
     val freeInChosen: Boolean = true,
     val maqam: Maqam = Maqamat.all.first(),
+    /** On a Turkish oud: the Turkish makam the taqsim is in, and the ahenk it sounds in. */
+    val turkish: Boolean = OudSettings.oud.value == OudType.Turkish,
+    val makam: TurkishMakam = TurkishMakams.all.first(),
+    val ahenk: Ahenk = OudSettings.ahenk.value,
     val length: TaqsimLength = TaqsimLength.Medium,
     val tempo: TaqsimTempo = TaqsimTempo.Normal,
     val ornamentLevel: OrnamentLevel = OrnamentLevel.Light,
@@ -117,8 +127,18 @@ data class TaqsimUiState(
         get() {
             val t = target ?: return null
             val f = frequency ?: return null
-            return centsBetween(f, Pitch(t.step).frequency(a4.toDouble()))
+            return centsBetween(f, t.hz * pitchScale)
         }
+
+    /** Frequency factor against A4 = 440: the A4 chosen and, on a Turkish oud, the ahenk. */
+    val pitchScale: Double get() = a4 / 440.0 * if (turkish) 2.0.pow(ahenk.semitones / 12.0) else 1.0
+
+    /** What the taqsim is in, for titles. */
+    val title: String get() = if (turkish) makam.turkishName else maqam.name
+
+    /** The heard note as a degree of the shown station, with its name and how far off (any system). */
+    val heardDegree: Pair<Int, Double>?
+        get() = frequency?.let { taqsim.phrases.getOrNull(shownPhrase)?.station?.degreeOfHz(it / pitchScale) }
 
     /** The heard note on the quarter-tone grid and how far off it is. */
     val heard: Pair<Pitch, Double>?
@@ -149,8 +169,12 @@ class TaqsimViewModel : ViewModel() {
 
     init {
         viewModelScope.launch {
-            combine(OudSettings.tuning, OudSettings.a4) { t, a -> t to a }.collect { (tuning, a4) ->
-                _state.update { it.copy(tuning = tuning, a4 = a4) }
+            combine(OudSettings.tuning, OudSettings.a4, OudSettings.oud, OudSettings.ahenk) { t, a, o, h -> listOf(t, a, o, h) }.collect { v ->
+                val turkish = v[2] == OudType.Turkish
+                val switched = turkish != _state.value.turkish
+                _state.update { it.copy(tuning = v[0] as Tuning, a4 = v[1] as Int, turkish = turkish, ahenk = v[3] as Ahenk) }
+                // Another oud: a taqsim in its own tradition.
+                if (switched) regenerate()
             }
         }
         regenerate()
@@ -184,6 +208,15 @@ class TaqsimViewModel : ViewModel() {
         regenerate()
     }
 
+    fun selectMakam(makam: TurkishMakam) {
+        _state.update { it.copy(makam = makam) }
+        regenerate()
+    }
+
+    /** A taqsim in the tradition of the oud chosen: an Arabic maqam, or a Turkish makam. */
+    private fun makeTaqsim(s: TaqsimUiState, seed: Long, length: TaqsimLength): Taqsim =
+        if (s.turkish) TurkishTaqsim.generate(s.makam, length, seed) else TaqsimGenerator(seed).generate(s.maqam, length)
+
     fun setLength(length: TaqsimLength) {
         _state.update { it.copy(length = length) }
         regenerate()
@@ -197,7 +230,7 @@ class TaqsimViewModel : ViewModel() {
         stop()
         val s = _state.value
         val seed = System.nanoTime()
-        _state.update { it.copy(taqsim = TaqsimGenerator(seed).generate(s.maqam, s.length), selected = null, exercise = null, drillPhrase = null) }
+        _state.update { it.copy(taqsim = makeTaqsim(s, seed, s.length), selected = null, exercise = null, drillPhrase = null) }
     }
 
     fun selectPhrase(index: Int) = _state.update { it.copy(selected = if (it.selected == index) null else index) }
@@ -285,7 +318,7 @@ class TaqsimViewModel : ViewModel() {
         // A medium taqsim always has a low and a high question; try a few seeds to be sure.
         repeat(8) {
             if (pair != null) return@repeat
-            taqsim = TaqsimGenerator(System.nanoTime()).generate(s.maqam, TaqsimLength.Medium)
+            taqsim = makeTaqsim(s, System.nanoTime(), TaqsimLength.Medium)
             val questions = taqsim.phrases.indices.filter { i ->
                 val p = taqsim.phrases[i]
                 p.role == PhraseRole.Question && (s.answerLevel.section == null || p.section == s.answerLevel.section) &&
@@ -328,7 +361,7 @@ class TaqsimViewModel : ViewModel() {
         collector = null
         val station = s.taqsim.phrases[a].station
         val target = s.taqsim.phrases[a].notes.last().degree
-        _state.update { it.copy(phase = AnswerPhase.Done, answerNotes = notes, verdict = AnswerCheck.evaluate(notes, station, target)) }
+        _state.update { it.copy(phase = AnswerPhase.Done, answerNotes = notes, verdict = AnswerCheck.evaluate(notes, station, target, s.pitchScale)) }
     }
 
     private var collector: NoteCollector? = null
@@ -340,7 +373,7 @@ class TaqsimViewModel : ViewModel() {
         _state.update { it.copy(playing = true, exercise = null) }
         playJob = viewModelScope.launch {
             val rendered = withContext(Dispatchers.Default) {
-                TaqsimRenderer.render(synth, s.taqsim, phrases, s.tempo.pulseMs, s.a4.toDouble(), s.tuning, s.ornaments, SAMPLE_RATE)
+                TaqsimRenderer.render(synth, s.taqsim, phrases, s.tempo.pulseMs, s.a4.toDouble(), s.tuning, s.ornaments, SAMPLE_RATE, s.pitchScale)
             }
             val pcm = rendered.pcm
             val starts = rendered.starts
@@ -373,7 +406,7 @@ class TaqsimViewModel : ViewModel() {
         val now = SystemClock.elapsedRealtime()
         if (now < ignoreMicUntil) return
         val s = _state.value
-        val targetFrequency = s.target?.let { Pitch(it.step).frequency(s.a4.toDouble()) }
+        val targetFrequency = s.target?.let { it.hz * s.pitchScale }
         val update = tracker.update(reading, now) {
             val f = it.frequency.toDouble()
             if (targetFrequency != null && it.canBeOctaveLower &&

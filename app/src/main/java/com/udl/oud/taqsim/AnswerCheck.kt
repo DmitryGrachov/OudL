@@ -5,8 +5,8 @@ import com.udl.oud.fretboard.Pitch
 import com.udl.oud.tuner.centsBetween
 import kotlin.math.abs
 
-/** A note the player played: its pitch on the quarter-tone grid and how far off it was. */
-data class HeardNote(val step: Int, val cents: Double, val startMs: Long = 0, val durationMs: Long = 0)
+/** A note the player played: its pitch on the quarter-tone grid, how far off, when, how long, and its frequency. */
+data class HeardNote(val step: Int, val cents: Double, val startMs: Long = 0, val durationMs: Long = 0, val hz: Double = 0.0)
 
 /**
  * Turns the mic's stream into separate notes: a new pluck, a slide of more than [newNoteCents]
@@ -63,7 +63,7 @@ class NoteCollector(
         if (current.size >= minReadings) {
             val f = median()
             val p = Pitch.nearest(f, a4, quarterTones = true)
-            done += HeardNote(p.step, centsBetween(f, p.frequency(a4)), startedAt, lastAt - startedAt + READING_MS)
+            done += HeardNote(p.step, centsBetween(f, p.frequency(a4)), startedAt, lastAt - startedAt + READING_MS, f)
         }
         current.clear()
     }
@@ -84,6 +84,56 @@ data class AnswerVerdict(val notes: List<HeardNote>, val outside: Set<Int>, val 
  */
 object AnswerCheck {
     const val MIN_NOTES = 3
+
+    /**
+     * Checks an answer; on a Turkish station the notes are matched to the makam's degrees by ear
+     * (by cents against their koma pitches), with [pitchScale] for the A4 and the ahenk.
+     */
+    fun evaluate(notes: List<HeardNote>, station: Station, target: Int, pitchScale: Double = 1.0): AnswerVerdict =
+        if (station.scale is ArabicScale) evaluate(notes, station, target) else evaluateByEar(notes, station, target, pitchScale)
+
+    /** How far off a note may be from a degree and still count as it. */
+    private const val SAME_DEGREE_CENTS = 30.0
+
+    private fun evaluateByEar(notes: List<HeardNote>, station: Station, target: Int, pitchScale: Double): AnswerVerdict {
+        val grammar = JinsGrammars.of(station.jins)
+        val matched = notes.map { station.degreeOfHz(it.hz / pitchScale) }
+        val outside = matched.indices.filter { abs(matched[it].second) > SAME_DEGREE_CENTS }.toSet()
+        val points = mutableListOf<AnswerPoint>()
+        if (notes.size < MIN_NOTES) {
+            points += AnswerPoint(false, "Слишком коротко: сыграй хотя бы $MIN_NOTES ноты")
+            return AnswerVerdict(notes, outside, points)
+        }
+        points += if (outside.isEmpty()) {
+            AnswerPoint(true, "Все ноты из макама")
+        } else {
+            val hints = outside.map { i ->
+                val (d, cents) = matched[i]
+                "${station.label(d)} ${if (cents > 0) "высоко" else "низко"} на ${abs(cents).toInt()} ц"
+            }.distinct()
+            AnswerPoint(false, hints.joinToString("; "))
+        }
+        val degrees = matched.map { it.first }
+        val colour = grammar.characteristic.map { Math.floorMod(it + station.jinsRoot, 7) }
+        points += if (degrees.indices.any { it !in outside && degrees[it] in colour }) {
+            AnswerPoint(true, "Цвет джинса слышен: ${colour.joinToString { station.label(it) }}")
+        } else {
+            AnswerPoint(false, "Не прозвучала характерная ступень ${colour.joinToString { station.label(it) }}")
+        }
+        val moves = degrees.zipWithNext { a, b -> Math.floorMod(b - a, 7).let { minOf(it, 7 - it) } }
+        points += if (moves.isEmpty() || moves.count { it <= 1 } >= moves.size * 0.6) {
+            AnswerPoint(true, "Движение в основном шагами")
+        } else {
+            AnswerPoint(false, "Много скачков: в таксиме чаще идут по соседним ступеням")
+        }
+        val last = degrees.last()
+        points += if (notes.lastIndex !in outside && Math.floorMod(last - target, 7) == 0) {
+            AnswerPoint(true, "Пришёл на ${station.label(target)}")
+        } else {
+            AnswerPoint(false, "Закончил на ${station.label(last)} — ответ должен прийти на ${station.label(target)}")
+        }
+        return AnswerVerdict(notes, outside, points)
+    }
 
     fun evaluate(notes: List<HeardNote>, station: Station, target: Int): AnswerVerdict {
         val grammar = JinsGrammars.of(station.jins)

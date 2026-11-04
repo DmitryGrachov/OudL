@@ -24,7 +24,8 @@ object TaqsimSayrs {
     private fun noteName(station: Station, degree: Int) = station.spelling(degree).label(NoteLabels.Solfege)
 
     /** The stations of [maqam] on [tonic]. */
-    class Stations(val maqam: Maqam, val tonic: Int) {
+    class Stations(val maqam: Maqam, val tonic: Int) : SayrStations {
+        override val ghammazDegree: Int get() = maqam.ghammaz
         private val g = maqam.ghammaz
         private val lowerTop = maqam.lower.intervals.size
         private val start = Sayrs.of(maqam)?.start ?: 0
@@ -38,21 +39,21 @@ object TaqsimSayrs {
         private val ceiling = (9 downTo 7).first { probe.step(it) <= TOP_STEP || it == 7 }
         private val floor = (-3..0).first { probe.step(it) >= BOTTOM_STEP }
 
-        val lower = station("", maqam.lower, 0, start, maxOf(-2, floor), maxOf(lowerTop + 1, start + 1)).let {
+        override val lower = station("", maqam.lower, 0, start, maxOf(-2, floor), maxOf(lowerTop + 1, start + 1)).let {
             it.copy(name = "${maqam.lower.name} на ${noteName(it, 0)}")
         }
-        val ghammaz = station("", maqam.upper, g, g, 0, minOf(g + 2, ceiling)).let { it.copy(name = "гаммаз ${noteName(it, g)}") }
-        val upper = station("", maqam.upper, g, g, g - 1, minOf(g + maqam.upper.intervals.size + 1, ceiling)).let {
+        override val ghammaz = station("", maqam.upper, g, g, 0, minOf(g + 2, ceiling)).let { it.copy(name = "гаммаз ${noteName(it, g)}") }
+        override val upper = station("", maqam.upper, g, g, g - 1, minOf(g + maqam.upper.intervals.size + 1, ceiling)).let {
             it.copy(name = "${maqam.upper.name} на ${noteName(it, g)}")
         }
-        val peak = station("", maqam.upper, g, 7, g, ceiling).let { it.copy(name = "октава ${noteName(it, 7)}") }
-        val back = station("", maqam.upperJins(true), g, g, minOf(lowerTop, g) - 1, 7, descending = maqam.hasDescent).let {
+        override val peak = station("", maqam.upper, g, 7, g, ceiling).let { it.copy(name = "октава ${noteName(it, 7)}") }
+        override val back = station("", maqam.upperJins(true), g, g, minOf(lowerTop, g) - 1, 7, descending = maqam.hasDescent).let {
             it.copy(name = if (maqam.hasDescent) "спуск: ${maqam.upperJins(true).name} на ${noteName(it, g)}" else "спуск к ${noteName(it, g)}")
         }
-        val qafla = lower.copy(focus = 0, name = "кафла на ${noteName(lower, 0)}")
+        override val qafla = lower.copy(focus = 0, name = "кафла на ${noteName(lower, 0)}")
 
         /** The sayr's usual modulations that fit on the neck, as stations. */
-        val modulations: List<Station> = Sayrs.of(maqam)?.modulations.orEmpty().mapNotNull { m ->
+        override val modulations: List<Station> = Sayrs.of(maqam)?.modulations.orEmpty().mapNotNull { m ->
             val target = Maqamat.all.firstOrNull { it.name == m.maqam } ?: return@mapNotNull null
             val t = tonic + m.offset
             val top = target.lower.intervals.size + 1
@@ -61,23 +62,31 @@ object TaqsimSayrs {
         }
 
         /** A stop for a "question" in the lower jins: its top, or the centre when that is higher. */
-        val lowerQuestion: Int get() = if (start > 0) start + 1 else lowerTop
+        override val lowerQuestion: Int get() = if (start > 0) start + 1 else lowerTop
     }
 
-    /** The sections of one taqsim on [maqam] at its usual tonic. */
+
     /** A plan: the form chosen and the sections in order. */
     data class Plan(val form: TaqsimForm, val sections: List<Section>)
 
     fun plan(maqam: Maqam, length: TaqsimLength, random: Random, tonic: Int = maqam.tonic): Plan {
         val s = Stations(maqam, tonic)
-        val g = maqam.ghammaz
+        return planFrom(s, length, random) { TaqsimForm.choose(length, s.modulations.size, random) }
+    }
+
+    /**
+     * The sections of a taqsim over any set of stations (an Arabic maqam's, a Turkish makam's),
+     * in the form [chooseForm] picks.
+     */
+    fun planFrom(s: SayrStations, length: TaqsimLength, random: Random, chooseForm: () -> TaqsimForm): Plan {
+        val g = s.ghammazDegree
         val sections = mutableListOf<Section>()
         fun add(kind: SectionKind, station: Station, vararg parts: Pair<PhraseRole, Int>) {
             sections += Section(kind, station, parts.map { it.first }, parts.map { it.second.coerceIn(station.low, station.high) })
         }
         val target = length.phrases.random(random)
         val wantsPeak = length != TaqsimLength.Short || random.nextDouble() < 0.3
-        val form = TaqsimForm.choose(length, s.modulations.size, random)
+        val form = chooseForm()
 
         // Opening: settle on the centre with a question and its answer; some forms arrive there
         // from the ghammaz or from above first.
@@ -202,4 +211,22 @@ enum class TaqsimForm(val title: String, val opening: Opening, val middle: Middl
             return fits.first()
         }
     }
+}
+
+/**
+ * The stations a sayr goes through: the lower jins on the tonic, the climb to the ghammaz (or
+ * güçlü), the upper jins, the octave, the way down, the qafla, and the usual modulations.
+ */
+interface SayrStations {
+    val ghammazDegree: Int
+    val lower: Station
+    val ghammaz: Station
+    val upper: Station
+    val peak: Station
+    val back: Station
+    val qafla: Station
+    val modulations: List<Station>
+
+    /** Where a question in the lower jins rests. */
+    val lowerQuestion: Int
 }
