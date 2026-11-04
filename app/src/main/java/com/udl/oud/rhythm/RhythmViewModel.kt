@@ -8,7 +8,14 @@ import com.udl.oud.audio.Drum
 import com.udl.oud.audio.Iqa
 import com.udl.oud.audio.Iqaat
 import com.udl.oud.audio.LoopTrack
+import com.udl.oud.audio.MicListener
 import com.udl.oud.audio.MicOnsetSource
+import com.udl.oud.audio.PcmPlayer
+import com.udl.oud.audio.PluckSynth
+import com.udl.oud.audio.toPcm
+import com.udl.oud.fretboard.Maqam
+import com.udl.oud.fretboard.Maqamat
+import com.udl.oud.tuner.OudSettings
 import com.udl.oud.audio.Stroke
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -25,6 +32,7 @@ import kotlin.random.Random
 
 enum class RhythmMode(val title: String) {
     Listen("Слушать"),
+    Melody("Мелодия"),
     Tap("Отстучать"),
     Oud("На уде"),
     Quiz("Угадай"),
@@ -62,6 +70,14 @@ data class RhythmUiState(
     val flash: Stroke? = null,
     val quiz: RhythmQuiz? = null,
     val error: String? = null,
+    /** Melody mode: the maqam, the etude on the iqa', whether the app plays the tune or the player does. */
+    val etudeMaqam: Maqam = Maqamat.all.first(),
+    val etude: IqaEtude? = null,
+    val melodyOn: Boolean = true,
+    /** The etude's note sounding (or due), and the notes the player hit in tune. */
+    val etudeNote: Int? = null,
+    val etudeHits: Set<Int> = emptySet(),
+    val etudeDone: Boolean = false,
 ) {
     /** Cycles that are checked: after the first (the count-in), and with the drum silent when playing on the oud. */
     fun checked(cycle: Int): Boolean = when (mode) {
@@ -70,7 +86,7 @@ data class RhythmUiState(
         else -> false
     }
 
-    fun drumIn(cycleInLoop: Int): Boolean = mode == RhythmMode.Listen || mode == RhythmMode.Quiz ||
+    fun drumIn(cycleInLoop: Int): Boolean = mode == RhythmMode.Listen || mode == RhythmMode.Quiz || mode == RhythmMode.Melody ||
         effectiveDrumMode == DrumMode.Always || cycleInLoop == 0
 
     /** On the oud the drum would be heard by the microphone, so it plays only one cycle in four. */
@@ -89,6 +105,9 @@ class RhythmViewModel : ViewModel() {
     val state = _state.asStateFlow()
 
     private val loop = LoopTrack()
+    private val player = PcmPlayer(LoopTrack.SAMPLE_RATE)
+    private val synth = PluckSynth(LoopTrack.SAMPLE_RATE)
+    private val pitch = MicListener(viewModelScope, onError = { e -> _state.update { it.copy(error = e) } }, onUpdate = ::onPitch)
     private val onsets = MicOnsetSource()
     private var tickJob: Job? = null
     private var micJob: Job? = null
@@ -101,14 +120,98 @@ class RhythmViewModel : ViewModel() {
 
     fun select(iqa: Iqa) {
         _state.update { it.copy(iqa = iqa, bpm = iqa.bpm, last = null, stats = RhythmStats()) }
-        restartIfPlaying()
+        if (_state.value.mode == RhythmMode.Melody) newEtude() else restartIfPlaying()
     }
 
     fun setMode(mode: RhythmMode) {
         stop()
         _state.update { it.copy(mode = mode, last = null, stats = RhythmStats(), quiz = null) }
         if (mode == RhythmMode.Quiz) nextQuestion()
+        if (mode == RhythmMode.Melody && _state.value.etude == null) newEtude()
     }
+
+    // --- Melody: an etude in a maqam on the iqa' ---
+
+    fun selectEtudeMaqam(m: Maqam) {
+        _state.update { it.copy(etudeMaqam = m) }
+        newEtude()
+    }
+
+    /** A new melody on the iqa' and maqam as they stand. */
+    fun newEtude() {
+        stop()
+        val s = _state.value
+        _state.update { it.copy(etude = IqaEtudes.generate(s.iqa, s.etudeMaqam, System.nanoTime()), etudeNote = null, etudeHits = emptySet(), etudeDone = false) }
+    }
+
+    /** Whether the app plays the tune, or only the drum while the player plays it (and is heard). */
+    fun setMelodyOn(on: Boolean) {
+        stop()
+        _state.update { it.copy(melodyOn = on, etudeHits = emptySet(), etudeDone = false) }
+    }
+
+    /** One cycle of drum to count in, then the etude: the drum, and the tune unless the player plays it. */
+    private fun playEtude() {
+        stopSound()
+        val s = _state.value
+        val etude = s.etude ?: return
+        val iqa = etude.iqa
+        val n = iqa.strokes.size
+        val stepMs = iqa.stepMs(s.bpm)
+        val scale = OudSettings.a4.value / 440.0
+        _state.update { it.copy(playing = true, etudeNote = null, etudeHits = emptySet(), etudeDone = false, step = null) }
+        tickJob = viewModelScope.launch {
+            val pcm = withContext(Dispatchers.Default) {
+                val mix = Drum.mix(iqa, s.bpm, etude.cycles + 1, clicks = s.clicks)
+                if (s.melodyOn) {
+                    val stepSamples = iqa.stepSamples(s.bpm, LoopTrack.SAMPLE_RATE)
+                    val plucks = etude.notes.map { e ->
+                        PluckSynth.Pluck(e.note.hz * scale, (e.step + n) * stepSamples, e.length * stepSamples, gain = MELODY_GAIN * e.note.velocity)
+                    }
+                    val melody = synth.render(plucks, mix.size)
+                    for (i in mix.indices) mix[i] = mix[i] * DRUM_UNDER_MELODY + melody[i]
+                }
+                mix.toPcm()
+            }
+            val ticker = launch {
+                while (isActive) {
+                    player.positionMs()?.let { pos ->
+                        val global = floor(pos / stepMs).toInt() - n
+                        val note = etude.notes.indexOfLast { it.step <= global }.takeIf { it >= 0 && global < etude.cycles * n }
+                        _state.update {
+                            it.copy(
+                                step = Math.floorMod(global, n),
+                                cycle = Math.floorDiv(global, n),
+                                etudeNote = note,
+                            )
+                        }
+                    }
+                    delay(12)
+                }
+            }
+            player.play(pcm)
+            ticker.cancel()
+            _state.update { it.copy(playing = false, step = null, etudeNote = null, etudeDone = true) }
+        }
+    }
+
+    /** While the player plays the tune: a note counts once it is heard in tune during its time. */
+    private fun onPitch(update: com.udl.oud.audio.PitchTracker.Update, now: Long) {
+        val s = _state.value
+        if (s.mode != RhythmMode.Melody || !s.playing || s.melodyOn) return
+        val i = s.etudeNote ?: return
+        val f = update.steady ?: update.frequency ?: return
+        val target = (s.etude ?: return).notes[i].note.hz * OudSettings.a4.value / 440.0
+        var cents = 1200 * kotlin.math.log2(f / target)
+        cents -= 1200 * kotlin.math.round(cents / 1200)
+        if (kotlin.math.abs(cents) <= IN_TUNE_CENTS && i !in s.etudeHits) _state.update { it.copy(etudeHits = it.etudeHits + i) }
+    }
+
+    /** Hears the player's notes in the melody mode. */
+    @RequiresPermission(Manifest.permission.RECORD_AUDIO)
+    fun startPitch() = pitch.start()
+
+    fun stopPitch() = pitch.stop()
 
     fun setDrumMode(mode: DrumMode) {
         _state.update { it.copy(drumMode = mode) }
@@ -137,6 +240,7 @@ class RhythmViewModel : ViewModel() {
 
     /** Starts the loop of the iqa' (four cycles, the drum in those the mode lets through). */
     fun play() {
+        if (_state.value.mode == RhythmMode.Melody) return playEtude()
         stopSound()
         val s = _state.value
         val iqa = s.quiz?.answer ?: s.iqa
@@ -316,6 +420,7 @@ class RhythmViewModel : ViewModel() {
     override fun onCleared() {
         stopSound()
         stopMic()
+        pitch.stop()
     }
 
     private companion object {
@@ -323,5 +428,8 @@ class RhythmViewModel : ViewModel() {
         val CALIBRATION = Iqa("Щелчки", "4/4", 1, ". . . .")
         const val CALIBRATION_BPM = 90
         const val CALIBRATION_BEATS = 14
+        const val MELODY_GAIN = 0.9f
+        const val DRUM_UNDER_MELODY = 0.6f
+        const val IN_TUNE_CENTS = 35.0
     }
 }

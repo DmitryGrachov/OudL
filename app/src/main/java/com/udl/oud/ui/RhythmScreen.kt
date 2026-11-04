@@ -84,6 +84,14 @@ fun RhythmRoute(vm: RhythmViewModel = viewModel()) {
             onPauseOrDispose { vm.stopMic() }
         }
     }
+    // In the melody mode, when the player plays the tune, the microphone hears the notes.
+    if (state.mode == RhythmMode.Melody && !state.melodyOn && mic.granted) {
+        LifecycleResumeEffect(Unit) {
+            @Suppress("MissingPermission")
+            vm.startPitch()
+            onPauseOrDispose { vm.stopPitch() }
+        }
+    }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val wide = maxWidth >= 600.dp
@@ -98,7 +106,9 @@ fun RhythmRoute(vm: RhythmViewModel = viewModel()) {
                         FilterChip(state.mode == m, onClick = { vm.setMode(m) }, label = { Text(m.title) })
                     }
                 }
-                if (state.mode == RhythmMode.Quiz) {
+                if (state.mode == RhythmMode.Melody) {
+                    MelodyPanel(state, vm, mic)
+                } else if (state.mode == RhythmMode.Quiz) {
                     QuizPanel(state, vm)
                 } else {
                     // While practising the library folds into one line, so the pads stay on screen.
@@ -428,5 +438,118 @@ private fun QuizPanel(state: RhythmUiState, vm: RhythmViewModel) {
             fontWeight = FontWeight.SemiBold,
         )
         Text(q.answer.about, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/**
+ * Melodies in rhythm: an etude in a maqam laid on the iqa' — listen to it over the drum, or play
+ * it yourself while the drum keeps time and the notes light up when they are due.
+ */
+@Composable
+private fun MelodyPanel(state: RhythmUiState, vm: RhythmViewModel, mic: MicPermission) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    IqaPicker(state, vm)
+    EtudeMaqamPicker(state, vm)
+    val etude = state.etude ?: return
+    Text(
+        "Мелодия в ${etude.maqam.name} на ${etude.iqa.name} ${etude.iqa.meter}: ${etude.cycles} цикл. — вступление, вопрос, ответ и кафла. " +
+            "Опорные ноты встают на думы, проходящие — на теки; перед мелодией — цикл барабана для счёта.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = muted,
+    )
+    PlayControls(state, vm)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(state.melodyOn, onClick = { vm.setMelodyOn(true) }, label = { Text("Мелодия звучит") })
+        FilterChip(!state.melodyOn, onClick = { vm.setMelodyOn(false) }, label = { Text("Играю я") })
+        TextButton(onClick = vm::newEtude) { Text("✨ Новая мелодия") }
+    }
+    if (!state.melodyOn) {
+        if (!mic.granted) PermissionRequest(mic.request)
+        Text(
+            "Барабан держит ритм, а мелодию играешь ты: нота подсвечивается, когда пора её играть, и зеленеет, если попал.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        if (state.etudeDone || state.etudeHits.isNotEmpty()) {
+            val total = etude.notes.size
+            Text(
+                "Попал в ${state.etudeHits.size} из $total нот" + if (state.etudeDone && state.etudeHits.size == total) " — чисто!" else "",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = if (state.etudeHits.size == total) InTuneGreen else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+    etude.phrases.forEach { p ->
+        Text("${p.title}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp))
+        (p.firstCycle until p.firstCycle + p.cycles).forEach { c -> EtudeCycle(state, etude, c, Modifier.fillMaxWidth().height(72.dp)) }
+    }
+}
+
+@Composable
+private fun EtudeMaqamPicker(state: RhythmUiState, vm: RhythmViewModel) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Макам", Modifier.align(Alignment.CenterVertically).width(170.dp), style = MaterialTheme.typography.labelLarge)
+        com.udl.oud.fretboard.Maqamat.families.forEach { family ->
+            val m = family.scales.first() as com.udl.oud.fretboard.Maqam
+            FilterChip(state.etudeMaqam == m, onClick = { vm.selectEtudeMaqam(m) }, label = { Text(m.name) })
+        }
+    }
+}
+
+/**
+ * One cycle of the etude: the iqa's strokes along the top, the notes below on their steps with
+ * a line for how long each rings; the note due now is lit, those hit in tune turn green.
+ */
+@Composable
+private fun EtudeCycle(state: RhythmUiState, etude: com.udl.oud.rhythm.IqaEtude, cycle: Int, modifier: Modifier) {
+    val iqa = etude.iqa
+    val measurer = rememberTextMeasurer()
+    val line = MaterialTheme.colorScheme.outlineVariant
+    val strong = MaterialTheme.colorScheme.outline
+    val dum = MaterialTheme.colorScheme.primary
+    val tak = MaterialTheme.colorScheme.tertiary
+    val ink = MaterialTheme.colorScheme.onSurface
+    val lit = MaterialTheme.colorScheme.secondaryContainer
+    val notes = etude.notesIn(cycle)
+    val n = iqa.strokes.size
+    Canvas(modifier) {
+        val w = size.width / n
+        val top = 4.dp.toPx()
+        val strokeY = 14.dp.toPx()
+        val noteY = 40.dp.toPx()
+        if (state.playing && state.cycle == cycle) state.step?.let { s ->
+            drawRect(lit, Offset(s * w, 0f), androidx.compose.ui.geometry.Size(w, size.height))
+        }
+        val groups = iqa.groupStarts
+        for (i in 0..n) {
+            val g = i in groups || i == n
+            drawLine(if (g) strong else line, Offset(i * w, top), Offset(i * w, size.height - top), if (g) 2.dp.toPx() else 1.dp.toPx())
+        }
+        val r = minOf(w * 0.3f, 8.dp.toPx())
+        iqa.strokes.forEachIndexed { i, s ->
+            val c = Offset(i * w + w / 2, strokeY)
+            when (s) {
+                Stroke.Dum -> drawCircle(dum, r, c)
+                Stroke.Tak -> drawCircle(tak, r * 0.7f, c)
+                Stroke.Ka -> drawCircle(tak, r * 0.45f, c, style = DrawStroke(1.5.dp.toPx()))
+                Stroke.Rest -> Unit
+            }
+        }
+        notes.forEach { (index, e) ->
+            val x = (e.step - cycle * n) * w
+            val len = minOf(e.length, n - (e.step - cycle * n)) * w
+            val color = when {
+                index in state.etudeHits -> InTuneGreen
+                state.etudeNote == index -> dum
+                else -> ink
+            }
+            drawLine(color.copy(alpha = 0.5f), Offset(x + 4.dp.toPx(), noteY + 18.dp.toPx()), Offset(x + len - 4.dp.toPx(), noteY + 18.dp.toPx()), 3.dp.toPx())
+            val t = measurer.measure(
+                e.note.name,
+                TextStyle(fontSize = 15.sp, fontWeight = if (state.etudeNote == index) FontWeight.ExtraBold else FontWeight.SemiBold, color = color),
+            )
+            drawText(t, topLeft = Offset(x + 4.dp.toPx(), noteY - t.size.height / 2f))
+        }
     }
 }

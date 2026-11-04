@@ -171,7 +171,17 @@ object Drum {
         drumIn: (Int) -> Boolean = { true },
         clicks: Boolean = false,
         sampleRate: Int = LoopTrack.SAMPLE_RATE,
-    ): ShortArray {
+    ): ShortArray = mix(iqa, bpm, cycles, drumIn, clicks, sampleRate).toPcm()
+
+    /** The same as [render], unmixed to PCM yet: for laying a melody over the drum. */
+    fun mix(
+        iqa: Iqa,
+        bpm: Int,
+        cycles: Int,
+        drumIn: (Int) -> Boolean = { true },
+        clicks: Boolean = false,
+        sampleRate: Int = LoopTrack.SAMPLE_RATE,
+    ): FloatArray {
         val step = iqa.stepSamples(bpm, sampleRate)
         val n = iqa.strokes.size
         val mix = FloatArray(step * n * cycles)
@@ -198,7 +208,7 @@ object Drum {
             }
             if (clicks) iqa.groupStarts.forEach { i -> place(if (i == 0) high else low, (c * n + i) * step) }
         }
-        return mix.toPcm()
+        return mix
     }
 
     /** A short soft woodblock-like tick. */
