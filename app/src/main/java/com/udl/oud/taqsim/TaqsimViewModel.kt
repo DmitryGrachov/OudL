@@ -316,7 +316,8 @@ class TaqsimViewModel : ViewModel() {
             phrase.notes.forEach { n ->
                 starts += t
                 lengths += n.beats * p
-                t += n.beats * p
+                // A breath inside the phrase is silence after the note.
+                t += (n.beats + n.pauseAfter) * p
             }
             if (pi != phrases.last) t += phrase.restBeats * p
         }

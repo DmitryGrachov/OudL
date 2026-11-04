@@ -21,35 +21,88 @@ class TaqsimGenerator(private val seed: Long) {
         val phrases = mutableListOf<TaqsimPhrase>()
         var lastStep = plan.sections.first().station.step(plan.sections.first().station.focus)
         var question: List<Int>? = null
+        // Перекличка: a short cell one phrase leaves, picked up and changed by the next ones there.
+        var cell: List<Int>? = null
+        var cellStation: Station? = null
+        var cellUses = 0
         for (section in plan.sections) {
             section.roles.forEachIndexed { i, role ->
                 val station = section.station
                 val from = station.degreeNear(lastStep).coerceIn(station.low, station.high)
                 val themeUse = themeFor(theme, section.kind, role, phrases.count { it.themeNotes.isNotEmpty() })
-                val draft = bestPhrase(section, role, section.endsOn[i], from, phrases.lastOrNull(), question, themeUse)
+                val c = cell
+                val cellUse = if (themeUse == null && role != PhraseRole.Answer && c != null && cellStation == station &&
+                    cellUses < 2 && random.nextDouble() < 0.7
+                ) cellVariant(c, cellUses) else null
+                val draft = bestPhrase(section, role, section.endsOn[i], from, phrases.lastOrNull(), question, themeUse ?: cellUse)
                 if (role == PhraseRole.Question) question = draft.degrees
                 if (role == PhraseRole.Answer) question = null
                 val themeBeats = draft.theme.withIndex().associate { (k, index) -> index to theme.rhythm[k % theme.rhythm.size] }
                 val figure = Timing.figureFor(role, random)
-                val beats = Timing.beats(draft.degrees, role, section.kind, station, random, themeBeats, figure)
+                val beats = Timing.beats(draft.degrees, role, section.kind, station, random, themeBeats, figure).toMutableList()
+                val notesHow = mutableListOf(draft.how)
+                if (figure != RhythmFigure.Flowing) notesHow += "ритм: ${figure.title}"
+
+                // Air: a breath inside a long phrase; a question that breaks off, left hanging.
+                val pauses = Timing.caesura(draft.degrees, beats, draft.theme.toSet(), station, random)
+                if (pauses.isNotEmpty()) notesHow += "с дыханием посередине"
+                var rest = Timing.rest(section.kind, role, random)
+                if (role == PhraseRole.Question && random.nextDouble() < BROKEN_QUESTION) {
+                    beats[beats.lastIndex] = random.nextDouble(1.2, 1.6)
+                    rest = random.nextDouble(2.6, 3.6)
+                    notesHow += "вопрос обрывается, недосказанным"
+                }
+
                 val velocity = Expression.velocities(draft.degrees, beats, section.kind, station, random)
-                val notes = draft.degrees.mapIndexed { n, d -> TaqsimNote(station.step(d), station.spelling(d), d, beats[n], velocity[n]) }
-                val how = if (figure == RhythmFigure.Flowing) draft.how else "${draft.how}; ритм: ${figure.title}"
+                val notes = draft.degrees.mapIndexed { n, d ->
+                    TaqsimNote(station.step(d), station.spelling(d), d, beats[n], velocity[n], pauses[n] ?: 0.0)
+                }
                 phrases += TaqsimPhrase(
-                    section.kind, role, station, how, notes, Timing.rest(section.kind, role, random), draft.theme.toSet(), figure,
+                    section.kind, role, station, notesHow.joinToString("; "), notes, rest, draft.theme.toSet(), figure,
                     Expression.tempo(section.kind),
                 )
                 lastStep = notes.last().step
+
+                // The cell for the next phrases: picked up from here, or a fresh one from this phrase.
+                if (cellUse != null && draft.how.contains(cellUse.name)) {
+                    cellUses++
+                } else if (themeUse == null && draft.degrees.size >= 5) {
+                    cell = draft.degrees.subList(1, 4).map { it - station.jinsRoot }
+                    cellStation = station
+                    cellUses = 0
+                } else if (station != cellStation) {
+                    cell = null
+                }
             }
         }
-        return Taqsim(maqam, seed, phrases, TaqsimSayrs.isDetailed(maqam), plan.form, theme)
+        // A held breath before the peak.
+        val shaped = phrases.mapIndexed { k, p ->
+            val next = phrases.getOrNull(k + 1)
+            if (next?.section == SectionKind.Peak && p.section != SectionKind.Peak) {
+                p.copy(restBeats = p.restBeats + PEAK_BREATH, how = "${p.how}; пауза перед кульминацией")
+            } else {
+                p
+            }
+        }
+        return Taqsim(maqam, seed, shaped, TaqsimSayrs.isDetailed(maqam), plan.form, theme)
+    }
+
+    /** The cell as the next phrase takes it up: a step lower or higher, inverted, or answered by itself. */
+    private fun cellVariant(cell: List<Int>, uses: Int): ThemeUse {
+        val (shape, name) = when (if (uses == 0) random.nextInt(4) else random.nextInt(2)) {
+            0 -> cell.map { it - 1 } to "перекличка: та же клетка ступенью ниже"
+            1 -> cell.map { it + 1 } to "перекличка: та же клетка ступенью выше"
+            2 -> cell.map { 2 * cell.first() - it } to "перекличка: клетка в обращении"
+            else -> (cell + cell.map { it - 1 }) to "перекличка: клетка и её эхо"
+        }
+        return ThemeUse(shape, name, isTheme = false)
     }
 
     /** A phrase being built: degrees in the station's scale, how it was made, which notes are the theme. */
     data class Draft(val degrees: List<Int>, val how: String, val theme: List<Int> = emptyList())
 
     /** How the theme is brought into one phrase: its notes (from the jins' root) and what was done to it. */
-    data class ThemeUse(val shape: List<Int>, val name: String)
+    data class ThemeUse(val shape: List<Int>, val name: String, val isTheme: Boolean = true)
 
     // --- The theme ---
 
@@ -171,15 +224,20 @@ class TaqsimGenerator(private val seed: Long) {
 
         // The theme, placed on the jins' root or next to where the line is, kept inside the range.
         if (theme != null) {
-            var shift = if (random.nextDouble() < 0.6) root else notes.last() - theme.shape.first()
-            val low = theme.shape.min() + shift
-            val high = theme.shape.max() + shift
-            if (low < station.low) shift += station.low - low
-            if (high > station.high) shift -= high - station.high
+            var shift = if (random.nextDouble() < 0.6 || !theme.isTheme) root else notes.last() - theme.shape.first()
+            // A theme may move to fit; a passed-on cell stays exactly where it was said to go,
+            // so "a step lower" is really a step lower (if it doesn't fit, the phrase goes without it).
+            if (theme.isTheme) {
+                val low = theme.shape.min() + shift
+                val high = theme.shape.max() + shift
+                if (low < station.low) shift += station.low - low
+                if (high > station.high) shift -= high - station.high
+            }
             val placed = theme.shape.map { it + shift }
             // When the line already stands on the theme's first note, that note becomes part of it.
-            if (connect(notes, isTheme, placed.first())) isTheme[isTheme.lastIndex] = true else add(placed.first(), t = true)
-            placed.drop(1).forEach { add(it, t = true) }
+            val flag = theme.isTheme
+            if (connect(notes, isTheme, placed.first())) isTheme[isTheme.lastIndex] = flag else add(placed.first(), t = flag)
+            placed.drop(1).forEach { add(it, t = flag) }
             how += theme.name
         }
 
@@ -287,6 +345,8 @@ class TaqsimGenerator(private val seed: Long) {
         const val TOP = 6
         const val NOISE = 1.2
         const val MAX_NOTES = 16
+        const val BROKEN_QUESTION = 0.3
+        const val PEAK_BREATH = 1.5
     }
 }
 
@@ -416,6 +476,19 @@ object Timing {
             beats[degrees.lastIndex - 1] = random.nextDouble(2.0, 2.6)
         }
         return beats.map { it.coerceAtLeast(SHORTEST) }
+    }
+
+    /**
+     * A breath inside a long phrase: on a resting degree in its middle, the note is held a little
+     * and a short silence follows, as a player takes air before going on. Note index → pause.
+     */
+    fun caesura(degrees: List<Int>, beats: MutableList<Double>, theme: Set<Int>, station: Station, random: Random): Map<Int, Double> {
+        if (degrees.size < 9 || random.nextDouble() >= 0.3) return emptyMap()
+        val rests = JinsGrammars.of(station.jins).rests.map { it + station.jinsRoot }.toSet()
+        val middle = (degrees.size / 3)..(degrees.size * 2 / 3)
+        val at = middle.filter { it !in theme && degrees[it] in rests }.randomOrNull(random) ?: return emptyMap()
+        beats[at] = maxOf(beats[at] * 1.5, 1.4)
+        return mapOf(at to random.nextDouble(0.6, 1.1))
     }
 
     /** Pause after a phrase, longer after a section's last one. */

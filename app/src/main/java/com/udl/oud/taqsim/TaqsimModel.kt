@@ -87,6 +87,8 @@ data class TaqsimNote(
     val beats: Double,
     /** How strongly it is played, 0..1. */
     val velocity: Float = 1f,
+    /** Silence after it, in beats: a breath inside the phrase. */
+    val pauseAfter: Double = 0.0,
 )
 
 /** A phrase with what it is for, how it was made, and the pause after it. */
@@ -104,7 +106,7 @@ data class TaqsimPhrase(
     /** Pace of this phrase against the base pulse: above 1 slower, below quicker. */
     val tempo: Double = 1.0,
 ) {
-    val beats: Double get() = notes.sumOf { it.beats } + restBeats
+    val beats: Double get() = notes.sumOf { it.beats + it.pauseAfter } + restBeats
 }
 
 /**
