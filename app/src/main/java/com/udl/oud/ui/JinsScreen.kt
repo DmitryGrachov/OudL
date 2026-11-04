@@ -61,14 +61,23 @@ import com.udl.oud.jins.JinsViewModel
 import com.udl.oud.taqsim.AnswerPhase
 import com.udl.oud.taqsim.JinsGrammars
 import com.udl.oud.taqsim.Motif
+import com.udl.oud.turkish.Perdes
+import com.udl.oud.turkish.TurkishGrammar
+import com.udl.oud.turkish.TurkishJinsCatalog
+import com.udl.oud.turkish.TurkishMakam
+import com.udl.oud.turkish.komaStepLabel
 import com.udl.oud.ui.theme.InTuneGreen
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.log2
 import kotlin.math.roundToInt
 
-/** The jins mode of the maqam tab: study one jins on its own. [onOpenMaqam] goes to a maqam that uses it. */
+/**
+ * The jins mode of the maqam tab: study one jins on its own. [onOpenMaqam] goes to a maqam that
+ * uses it, [onOpenMakam] to a Turkish makam on a Turkish oud.
+ */
 @Composable
-fun JinsRoute(onOpenMaqam: (Maqam) -> Unit, vm: JinsViewModel = viewModel()) {
+fun JinsRoute(onOpenMakam: (TurkishMakam) -> Unit, onOpenMaqam: (Maqam) -> Unit, vm: JinsViewModel = viewModel()) {
     val mic = rememberMicPermission()
     val state by vm.state.collectAsStateWithLifecycle()
     if (mic.granted && state.live) {
@@ -96,7 +105,7 @@ fun JinsRoute(onOpenMaqam: (Maqam) -> Unit, vm: JinsViewModel = viewModel()) {
             EtudePanel(state, vm)
             JinsAnswerPanel(state, vm)
             MotifList(state, vm)
-            WhereItAppears(state, onOpenMaqam)
+            if (state.turkish) WhereItAppearsTurkish(state, onOpenMakam) else WhereItAppears(state, onOpenMaqam)
             Row(Modifier.fillMaxWidth().height(if (wide) 360.dp else 300.dp).padding(top = 8.dp)) {
                 JinsBoard(state, vm, Modifier.weight(1f).fillMaxHeight())
                 JinsStaff(state, Modifier.width(staffWidth).fillMaxHeight().padding(start = 8.dp))
@@ -106,8 +115,19 @@ fun JinsRoute(onOpenMaqam: (Maqam) -> Unit, vm: JinsViewModel = viewModel()) {
     }
 }
 
-private fun JinsUiState.name(degree: Int) = station.spelling(degree).label(NoteLabels.Solfege)
+private fun JinsUiState.name(degree: Int) = station.label(degree)
 private fun rootName(step: Int) = Spelling.of(step).label(NoteLabels.Solfege)
+private fun perdeName(written: Int) = Perdes.of(written) ?: written.toString()
+
+/** A step of the jins as written: tones and quarter tones on the Arabic oud, komas (T, B, S…) on the Turkish one. */
+private fun JinsUiState.stepLabel(step: Int) = if (turkish) "${komaStepLabel(step)} $step" else intervalLabel(step)
+
+/** The line about the jins: the Turkish jins' own on a Turkish oud. */
+private fun JinsUiState.about() = if (turkish) TurkishGrammar.about(tjins.name) else grammar.about
+
+/** A note the player played: on a Turkish oud the nearest degree, otherwise its quarter-tone name. */
+private fun JinsUiState.playedName(n: com.udl.oud.taqsim.HeardNote) =
+    if (turkish) name(station.degreeOfHz(n.hz / pitchScale).first) else Pitch(n.step).label(NoteLabels.Solfege)
 
 @Composable
 private fun JinsHeardBar(state: JinsUiState, vm: JinsViewModel, micGranted: Boolean) {
@@ -122,6 +142,23 @@ private fun JinsHeardBar(state: JinsUiState, vm: JinsViewModel, micGranted: Bool
                     style = MaterialTheme.typography.titleMedium,
                     color = muted,
                 )
+                state.turkish -> {
+                    // On a Turkish oud: the nearest perde of the jins' scale, and how far off.
+                    val (degree, cents) = state.heardDegree ?: return@Row
+                    val inTune = abs(cents) <= JinsUiState.IN_TUNE_CENTS
+                    val inJins = Math.floorMod(degree, 7) in state.degrees
+                    Text(
+                        state.name(degree),
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (inTune) InTuneGreen else MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        "  ${signedCents(cents)}" + if (!inJins) "  · рядом с джинсом" else "",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (inTune) InTuneGreen else MaterialTheme.colorScheme.tertiary,
+                    )
+                }
                 else -> {
                     val inTune = abs(heard.second) <= JinsUiState.IN_TUNE_CENTS
                     val degree = state.degreeOf(heard.first.step)
@@ -146,6 +183,10 @@ private fun JinsHeardBar(state: JinsUiState, vm: JinsViewModel, micGranted: Bool
 
 @Composable
 private fun JinsPicker(state: JinsUiState, vm: JinsViewModel) {
+    if (state.turkish) {
+        TurkishJinsPicker(state, vm)
+        return
+    }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Джинс", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
         JinsCatalog.ajnas.forEach { j ->
@@ -171,6 +212,37 @@ private fun JinsPicker(state: JinsUiState, vm: JinsViewModel) {
     }
 }
 
+/** On a Turkish oud: dörtlü, beşli and üçlü, on the perdes the makams put them on. */
+@Composable
+private fun TurkishJinsPicker(state: JinsUiState, vm: JinsViewModel) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Джинс", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
+        TurkishJinsCatalog.ajnas.forEach { j ->
+            FilterChip(
+                j == state.tjins,
+                onClick = { vm.selectTurkish(j) },
+                label = { Text(j.name) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+            )
+        }
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("На перде", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
+        TurkishJinsCatalog.roots(state.tjins).forEach { r ->
+            FilterChip(r == state.durak, onClick = { vm.setDurak(r) }, label = { Text(perdeName(r)) })
+        }
+        Text(
+            "ахенк ${state.ahenk.title}",
+            Modifier.align(Alignment.CenterVertically).padding(start = 8.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 /** Notes, intervals, colour, pillars and how the root is reached. */
 @Composable
 private fun JinsCharacter(state: JinsUiState, vm: JinsViewModel) {
@@ -182,7 +254,7 @@ private fun JinsCharacter(state: JinsUiState, vm: JinsViewModel) {
             Text(
                 buildAnnotatedString {
                     state.degrees.forEach { d ->
-                        val lit = state.playing == state.station.step(d) || state.target == state.station.step(d)
+                        val lit = state.playing == d || state.target == d
                         val style = when {
                             lit -> SpanStyle(color = MaterialTheme.colorScheme.onPrimary, background = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
                             d in g.characteristic -> SpanStyle(color = colour, fontWeight = FontWeight.Bold)
@@ -190,7 +262,7 @@ private fun JinsCharacter(state: JinsUiState, vm: JinsViewModel) {
                             else -> SpanStyle(color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
                         }
                         withStyle(style) { append(" ${state.name(d)} ") }
-                        state.jins.intervals.getOrNull(d)?.let { withStyle(SpanStyle(color = muted)) { append(" ${intervalLabel(it)} ") } }
+                        state.intervals.getOrNull(d)?.let { withStyle(SpanStyle(color = muted)) { append(" ${state.stepLabel(it)} ") } }
                     }
                 },
                 Modifier.weight(1f),
@@ -198,7 +270,7 @@ private fun JinsCharacter(state: JinsUiState, vm: JinsViewModel) {
             )
             TextButton(onClick = vm::playScale) { Text("▶ Звукоряд") }
         }
-        Text(g.about, style = MaterialTheme.typography.bodyLarge)
+        Text(state.about(), style = MaterialTheme.typography.bodyLarge)
         Text(
             buildAnnotatedString {
                 withStyle(SpanStyle(color = colour, fontWeight = FontWeight.SemiBold)) {
@@ -239,8 +311,7 @@ private fun MotifList(state: JinsUiState, vm: JinsViewModel) {
 
 @Composable
 private fun MotifChip(state: JinsUiState, vm: JinsViewModel, m: Motif, muted: androidx.compose.ui.graphics.Color) {
-    val steps = state.motifSteps(m)
-    val sounding = state.playing != null && state.playing in steps
+    val sounding = state.playing != null && state.playing in m.degrees
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 8.dp)) {
         Text(
             buildAnnotatedString {
@@ -275,6 +346,22 @@ private fun WhereItAppears(state: JinsUiState, onOpenMaqam: (Maqam) -> Unit) {
     }
 }
 
+/** Every Turkish makam that uses the jins, below on its durak or above; a tap opens the makam. */
+@Composable
+private fun WhereItAppearsTurkish(state: JinsUiState, onOpenMakam: (TurkishMakam) -> Unit) {
+    val list = TurkishJinsCatalog.appearances(state.tjins)
+    if (list.isEmpty()) return
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Text("Где встречается", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            list.forEach { a ->
+                val where = if (a.upper) "наверху" else "внизу, на дураке"
+                AssistChip(onClick = { onOpenMakam(a.makam) }, label = { Text("${a.makam.turkishName}: $where, ${perdeName(a.durak)}") })
+            }
+        }
+    }
+}
+
 @Composable
 private fun MotifDrillBar(state: JinsUiState, vm: JinsViewModel) {
     val exercise = state.exercise ?: return
@@ -288,11 +375,11 @@ private fun MotifDrillBar(state: JinsUiState, vm: JinsViewModel) {
                     style = MaterialTheme.typography.titleLarge,
                 )
             } else {
-                val name = state.degreeOf(target)?.let(state::name) ?: Pitch(target).label(NoteLabels.Solfege)
+                val name = state.name(target)
                 Text("«${motif.name}», нота ${exercise.results.size + 1} из ${exercise.steps.size}:  ", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("сыграй $name", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 state.frequency?.let { f ->
-                    val cents = com.udl.oud.tuner.centsBetween(f, Pitch(target).frequency(state.a4.toDouble()))
+                    val cents = com.udl.oud.tuner.centsBetween(f, state.hz(target))
                     Text(
                         when {
                             abs(cents) > 50 -> "   другая нота"
@@ -312,56 +399,72 @@ private fun MotifDrillBar(state: JinsUiState, vm: JinsViewModel) {
     }
 }
 
-/** The neck with the jins: its notes bold, the colour note in its own colour, the notes around it faint. */
+/** One place of a degree on the neck: course, cents above the open string, degree, frequency. */
+private data class JinsDot(val course: Int, val cents: Double, val degree: Int, val hz: Double)
+
+/**
+ * The neck with the jins: its notes bold, the colour note in its own colour, the notes around it
+ * faint. Dots are placed by frequency, so quarter tones and komas sit where they are played.
+ */
 @Composable
 private fun JinsBoard(state: JinsUiState, vm: JinsViewModel, modifier: Modifier) {
     val measurer = rememberTextMeasurer()
     val maxCents = Fretboard.NECK_CENTS
-    val positions = remember(state.tuning) { Fretboard.positions(state.tuning, maxCents) }
-    val top = state.jins.intervals.size
-    // Pitch class → degree, for the jins and two notes either side.
-    val degreeOfClass = remember(state.jins, state.root) { (-2..top + 2).associateBy { Math.floorMod(state.station.step(it), 24) } }
-    val heard = state.heard?.takeIf { abs(it.second) <= 40 }
-    val colors = boardColors(if (heard != null && abs(heard.second) <= JinsUiState.IN_TUNE_CENTS) InTuneGreen else MaterialTheme.colorScheme.tertiary)
+    val top = state.intervals.size
+    val station = state.station
+    val a4 = state.a4.toDouble()
+    val dots = remember(station, state.tuning, a4, state.pitchScale) {
+        state.tuning.courses.flatMapIndexed { course, open ->
+            val openHz = open.frequency(a4)
+            (-10..17).mapNotNull { d ->
+                val hz = station.hz(d) * state.pitchScale
+                var cents = 1200 * log2(hz / openHz)
+                if (abs(cents) < 12) cents = 0.0
+                if (cents < 0 || cents > maxCents) null else JinsDot(course, cents, d, hz)
+            }
+        }
+    }
+    val heardHz = state.frequency
+    val heardInTune = state.heardDegree?.let { abs(it.second) <= JinsUiState.IN_TUNE_CENTS } ?: false
+    val colors = boardColors(if (heardInTune) InTuneGreen else MaterialTheme.colorScheme.tertiary)
     val colourFill = MaterialTheme.colorScheme.tertiary
-    val lit = state.playing ?: state.target
-    val shown = positions.filter { Math.floorMod(it.pitch.step, 24) in degreeOfClass }
+    val litHz = (state.playing ?: state.target)?.let(state::hz)
+    fun near(a: Double, b: Double, cents: Double) = abs(1200 * log2(a / b)) <= cents
     Canvas(
-        modifier.pointerInput(shown, state.tuning) {
+        modifier.pointerInput(dots, state.tuning) {
             detectTapGestures { tap ->
                 val g = BoardGeometry(Size(size.width.toFloat(), size.height.toFloat()), state.tuning.courses.size, true, maxCents, this)
-                shown.minByOrNull { val c = g.center(it); hypot(c.x - tap.x, c.y - tap.y) }
-                    ?.takeIf { val c = g.center(it); hypot(c.x - tap.x, c.y - tap.y) <= 30.dp.toPx() }
-                    ?.let { vm.playNote(it.pitch.step) }
+                fun dist(p: JinsDot) = hypot(g.x(p.cents) - tap.x, g.y(p.course) - tap.y)
+                dots.minByOrNull(::dist)?.takeIf { dist(it) <= 30.dp.toPx() }?.let { vm.playNote(it.degree) }
             }
         },
     ) {
         val g = BoardGeometry(size, state.tuning.courses.size, true, maxCents, this)
         drawBoard(g, colors, measurer)
-        shown.forEach { p ->
-            val degree = degreeOfClass.getValue(Math.floorMod(p.pitch.step, 24))
-            val inJins = degree in 0..top
-            val center = g.center(p)
+        dots.forEach { p ->
+            val k = Math.floorMod(p.degree, 7)
+            val inJins = k in 0..top
+            val center = Offset(g.x(p.cents), g.y(p.course))
             val radius = (if (inJins) 14.dp else 9.dp).toPx() * g.dotScale
             val highlight = when {
-                p.pitch.step == lit -> colors.playing
-                heard != null && p.pitch.step == heard.first.step -> colors.heard
+                litHz != null && near(p.hz, litHz, 5.0) -> colors.playing
+                heardHz != null && near(p.hz, heardHz, 35.0) -> colors.heard
                 else -> null
             }
             if (highlight != null) drawCircle(highlight.copy(alpha = 0.3f), radius = radius + 12.dp.toPx() * g.dotScale, center = center)
             val fill = when {
                 highlight != null -> highlight
                 !inJins -> colors.accidental // the notes around the jins, muted
-                Math.floorMod(degree, 7) in state.grammar.characteristic -> colourFill
+                k in state.grammar.characteristic -> colourFill
                 else -> colors.natural
             }
             drawCircle(fill, radius = radius, center = center)
-            if (p.cents == 0) drawCircle(colors.nut, radius = radius, center = center, style = Stroke(2.dp.toPx()))
-            if (Math.floorMod(degree, 7) == 0) {
+            if (p.cents == 0.0) drawCircle(colors.nut, radius = radius, center = center, style = Stroke(2.dp.toPx()))
+            if (k == 0) {
                 drawCircle(colors.label, radius = radius + 4.dp.toPx() * g.dotScale, center = center, style = Stroke(3.dp.toPx() * g.dotScale))
             }
             val label = measurer.measure(
-                state.name(degree),
+                state.name(p.degree),
                 TextStyle(fontSize = (if (inJins) 11.sp else 9.sp) * g.dotScale, fontWeight = FontWeight.SemiBold, color = highlight ?: colors.label),
             )
             drawText(label, topLeft = Offset(center.x - label.size.width / 2f, center.y + radius + 3.dp.toPx() * g.dotScale))
@@ -371,18 +474,29 @@ private fun JinsBoard(state: JinsUiState, vm: JinsViewModel, modifier: Modifier)
 
 @Composable
 private fun JinsStaff(state: JinsUiState, modifier: Modifier) {
-    val step = state.playing ?: state.target
-    val heard = state.heard?.takeIf { step == null && abs(it.second) <= 40 }
-    val shown = step ?: heard?.first?.step
-    val degree = shown?.let(state::degreeOf)
-    val note = shown?.let { s -> degree?.let { StaffNote.arabic(s, state.station.spelling(it)) } ?: StaffNote.arabic(s) }
-    val name = shown?.let { s -> degree?.let(state::name) ?: Pitch(s).label(NoteLabels.Solfege) }
+    val degree = state.playing ?: state.target
     val color = when {
-        step != null -> MaterialTheme.colorScheme.primary
-        heard != null && abs(heard.second) <= JinsUiState.IN_TUNE_CENTS -> InTuneGreen
+        degree != null -> MaterialTheme.colorScheme.primary
+        (state.heardDegree?.second?.let(::abs) ?: 99.0) <= JinsUiState.IN_TUNE_CENTS -> InTuneGreen
         else -> MaterialTheme.colorScheme.onSurface
     }
-    NoteStaff(note, name, color, hint = "записано октавой выше звука", octaveClef = true, modifier = modifier)
+    val hint = "записано октавой выше звука"
+    if (degree != null) {
+        NoteStaff(state.station.staff(degree), state.name(degree), color, hint = hint, octaveClef = true, modifier = modifier)
+        return
+    }
+    if (state.turkish) {
+        // A heard note, written as the nearest degree of the jins' scale.
+        val heard = state.heardDegree?.takeIf { abs(it.second) <= 40 }
+        NoteStaff(heard?.let { state.station.staff(it.first) }, heard?.let { state.name(it.first) }, color, hint = hint, octaveClef = true, modifier = modifier)
+        return
+    }
+    val heard = state.heard?.takeIf { abs(it.second) <= 40 }
+    val shown = heard?.first?.step
+    val d = shown?.let(state::degreeOf)
+    val note = shown?.let { s -> d?.let { StaffNote.arabic(s, state.station.spelling(it)) } ?: StaffNote.arabic(s) }
+    val name = shown?.let { s -> d?.let(state::name) ?: Pitch(s).label(NoteLabels.Solfege) }
+    NoteStaff(note, name, color, hint = hint, octaveClef = true, modifier = modifier)
 }
 
 /** A short taqsim inside the jins: listen to it phrase by phrase, the sounding note lit. */
@@ -393,7 +507,7 @@ private fun EtudePanel(state: JinsUiState, vm: JinsViewModel) {
     Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "Этюд в джинсе — маленький таксим на ${state.jins.intervals.size + 1} нотах",
+                "Этюд в джинсе — маленький таксим на ${state.intervals.size + 1} нотах",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f),
@@ -469,7 +583,7 @@ private fun JinsAnswerPanel(state: JinsUiState, vm: JinsViewModel) {
                     state.answerNotes.forEachIndexed { i, n ->
                         val outside = state.verdict?.outside?.contains(i) ?: false
                         withStyle(SpanStyle(color = if (outside) MaterialTheme.colorScheme.tertiary else InTuneGreen, fontWeight = FontWeight.SemiBold)) {
-                            append(" ${Pitch(n.step).label(NoteLabels.Solfege)} ")
+                            append(" ${state.playedName(n)} ")
                         }
                     }
                 },

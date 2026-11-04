@@ -42,18 +42,28 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.udl.oud.tuner.Ahenk
+import com.udl.oud.tuner.OudType
+import com.udl.oud.turkish.TurkishJins
+import com.udl.oud.turkish.TurkishJinsCatalog
 import kotlin.math.abs
+import kotlin.math.pow
 
 data class JinsUiState(
     val jins: Jins = JinsCatalog.ajnas.first(),
     val root: Int = JinsCatalog.defaultRoot(JinsCatalog.ajnas.first()),
+    /** On a Turkish oud: a Turkish jins on a perde (written komas), heard in the ahenk. */
+    val turkish: Boolean = OudSettings.oud.value == OudType.Turkish,
+    val tjins: TurkishJins = TurkishJinsCatalog.ajnas.first(),
+    val durak: Int = TurkishJinsCatalog.defaultRoot(TurkishJinsCatalog.ajnas.first()),
+    val ahenk: Ahenk = OudSettings.ahenk.value,
     val tuning: Tuning = OudSettings.tuning.value,
     val a4: Int = OudSettings.a4.value,
-    /** Grid step sounding now, to light it up. */
+    /** Degree sounding now (with its octave), to light it up. */
     val playing: Int? = null,
     val live: Boolean = true,
     val frequency: Double? = null,
-    /** Motif drill: steps are the motif's grid pitches. */
+    /** Motif drill: steps are the motif's degrees. */
     val exercise: Drill? = null,
     val drillMotif: Motif? = null,
     val showCommon: Boolean = false,
@@ -65,7 +75,18 @@ data class JinsUiState(
     val verdict: AnswerVerdict? = null,
     val error: String? = null,
 ) {
-    val station: Station get() = JinsCatalog.station(jins, root)
+    val station: Station get() = if (turkish) TurkishJinsCatalog.station(tjins, durak) else JinsCatalog.station(jins, root)
+
+    val title: String get() = if (turkish) tjins.name else jins.name
+
+    /** Steps of the jins: quarter tones on the Arabic oud, komas on the Turkish one. */
+    val intervals: List<Int> get() = if (turkish) tjins.intervals else jins.intervals
+
+    /** From the station's pitches at A4 = 440 to what sounds: the A4 chosen and, on a Turkish oud, the ahenk. */
+    val pitchScale: Double get() = a4 / 440.0 * if (turkish) 2.0.pow(ahenk.semitones / 12.0) else 1.0
+
+    /** The frequency a degree sounds at. */
+    fun hz(degree: Int): Double = station.hz(degree) * pitchScale
 
     /** The etude's question and the answer after it: the answer mode asks that question. */
     val question: Int get() = etude.phrases.indexOfFirst { it.role == PhraseRole.Question }
@@ -73,14 +94,12 @@ data class JinsUiState(
 
     /** Phrase of the etude sounding now. */
     val etudePhrase: Int? get() = etudeNote?.let { n -> etude.phrases.runningFold(0) { a, p -> a + p.notes.size }.indexOfLast { it <= n } }
-    val grammar: JinsGrammar get() = JinsGrammars.of(jins)
+    val grammar: JinsGrammar get() = JinsGrammars.of(station.jins)
 
     /** The jins' own notes, root to top. */
-    val degrees: IntRange get() = 0..jins.intervals.size
+    val degrees: IntRange get() = 0..intervals.size
 
     val colour: List<Int> get() = grammar.characteristic.toList().sorted()
-
-    fun motifSteps(m: Motif): List<Int> = m.degrees.map { station.step(it) }
 
     val target: Int? get() = exercise?.target
 
@@ -90,6 +109,9 @@ data class JinsUiState(
             val p = Pitch.nearest(it, a4.toDouble(), quarterTones = true)
             p to centsBetween(it, p.frequency(a4.toDouble()))
         }
+
+    /** The heard note as the nearest degree of the scale (with its octave) and how far off it is. */
+    val heardDegree: Pair<Int, Double>? get() = frequency?.let { station.degreeOfHz(it / pitchScale) }
 
     /** Degree of the jins (0..n) a grid step belongs to, or null for the notes around it. */
     fun degreeOf(step: Int): Int? = degrees.firstOrNull { Math.floorMod(station.step(it) - step, 24) == 0 }
@@ -116,8 +138,11 @@ class JinsViewModel : ViewModel() {
 
     init {
         viewModelScope.launch {
-            combine(OudSettings.tuning, OudSettings.a4) { t, a -> t to a }.collect { (tuning, a4) ->
-                _state.update { it.copy(tuning = tuning, a4 = a4) }
+            combine(OudSettings.tuning, OudSettings.a4, OudSettings.oud, OudSettings.ahenk) { t, a, o, h -> listOf(t, a, o, h) }.collect { v ->
+                val turkish = v[2] == OudType.Turkish
+                val switched = turkish != _state.value.turkish
+                _state.update { it.copy(tuning = v[0] as Tuning, a4 = v[1] as Int, turkish = turkish, ahenk = v[3] as Ahenk) }
+                if (switched || (turkish && _state.value.etude.title != _state.value.tjins.name)) newEtude()
             }
         }
     }
@@ -150,6 +175,17 @@ class JinsViewModel : ViewModel() {
         newEtude()
     }
 
+    /** On a Turkish oud: a Turkish jins, on the perde it is first found on. */
+    fun selectTurkish(jins: TurkishJins) {
+        _state.update { it.copy(tjins = jins, durak = TurkishJinsCatalog.defaultRoot(jins), exercise = null, drillMotif = null) }
+        newEtude()
+    }
+
+    fun setDurak(written: Int) {
+        _state.update { it.copy(durak = written, exercise = null, drillMotif = null) }
+        newEtude()
+    }
+
     fun setRoot(step: Int) {
         _state.update { it.copy(root = step, exercise = null, drillMotif = null) }
         newEtude()
@@ -168,7 +204,9 @@ class JinsViewModel : ViewModel() {
         stop()
         val s = _state.value
         _state.update {
-            it.copy(etude = JinsEtude.generate(s.jins, s.root, System.nanoTime()), phase = AnswerPhase.Idle, verdict = null, answerNotes = emptyList())
+            val seed = System.nanoTime()
+            val etude = if (s.turkish) JinsEtude.generateTurkish(s.tjins, s.durak, seed) else JinsEtude.generate(s.jins, s.root, seed)
+            it.copy(etude = etude, phase = AnswerPhase.Idle, verdict = null, answerNotes = emptyList())
         }
     }
 
@@ -196,7 +234,7 @@ class JinsViewModel : ViewModel() {
         val answer = s.etude.phrases.getOrNull(s.answer) ?: return
         val notes = collector?.finish().orEmpty()
         collector = null
-        _state.update { it.copy(phase = AnswerPhase.Done, answerNotes = notes, verdict = AnswerCheck.evaluate(notes, answer.station, answer.notes.last().degree)) }
+        _state.update { it.copy(phase = AnswerPhase.Done, answerNotes = notes, verdict = AnswerCheck.evaluate(notes, answer.station, answer.notes.last().degree, s.pitchScale)) }
     }
 
     private var collector: NoteCollector? = null
@@ -210,7 +248,7 @@ class JinsViewModel : ViewModel() {
             val rendered = withContext(Dispatchers.Default) {
                 TaqsimRenderer.render(
                     synth, s.etude, phrases, ETUDE_PULSE_MS, s.a4.toDouble(), s.tuning,
-                    Ornamenter.decorate(s.etude, OrnamentLevel.Light), SAMPLE_RATE,
+                    Ornamenter.decorate(s.etude, OrnamentLevel.Light), SAMPLE_RATE, s.pitchScale,
                 )
             }
             ignoreMicUntil = Long.MAX_VALUE
@@ -218,7 +256,7 @@ class JinsViewModel : ViewModel() {
                 while (isActive) {
                     player.positionMs()?.let { pos ->
                         val i = rendered.starts.indexOfLast { it <= pos }.takeIf { it >= 0 && pos < rendered.totalMs - rendered.tailMs + 400 }
-                        _state.update { it.copy(etudeNote = i?.let { first + it }, playing = i?.let { notes[it].step }) }
+                        _state.update { it.copy(etudeNote = i?.let { first + it }, playing = i?.let { notes[it].degree }) }
                     }
                     delay(25)
                 }
@@ -234,18 +272,18 @@ class JinsViewModel : ViewModel() {
 
     fun toggleCommon() = _state.update { it.copy(showCommon = !it.showCommon) }
 
-    fun playNote(step: Int) = play(listOf(step), listOf(900.0))
+    fun playNote(degree: Int) = play(listOf(degree), listOf(900.0))
 
     /** The jins up from its root and back down. */
     fun playScale() {
         val s = _state.value
-        val up = s.degrees.map { s.station.step(it) }
+        val up = s.degrees.toList()
         val steps = up + up.reversed().drop(1)
         play(steps, steps.indices.map { if (it == steps.lastIndex) 1100.0 else 420.0 })
     }
 
     fun playMotif(m: Motif) {
-        val steps = _state.value.motifSteps(m)
+        val steps = m.degrees
         play(steps, steps.indices.map { if (it == steps.lastIndex) 1000.0 else 360.0 })
     }
 
@@ -254,7 +292,7 @@ class JinsViewModel : ViewModel() {
         stop()
         steady.reset()
         awaitingPluck = false
-        _state.update { it.copy(exercise = Drill(it.motifSteps(m)), drillMotif = m, live = true) }
+        _state.update { it.copy(exercise = Drill(m.degrees), drillMotif = m, live = true) }
     }
 
     fun restartDrill() = _state.value.drillMotif?.let(::startMotifDrill)
@@ -267,15 +305,16 @@ class JinsViewModel : ViewModel() {
         _state.update { it.copy(playing = null, etudeNote = null) }
     }
 
+    /** Plays [steps] — degrees of the station — for [lengthsMs] each. */
     private fun play(steps: List<Int>, lengthsMs: List<Double>) {
         stop()
-        val a4 = _state.value.a4.toDouble()
+        val s = _state.value
         val starts = lengthsMs.runningFold(0.0) { acc, l -> acc + l }.dropLast(1)
         val totalMs = starts.last() + lengthsMs.last() + TAIL_MS
         playJob = viewModelScope.launch {
             val pcm = withContext(Dispatchers.Default) {
                 val plucks = steps.indices.map { i ->
-                    PluckSynth.Pluck(Pitch(steps[i]).frequency(a4), (starts[i] * SAMPLE_RATE / 1000).toInt(), (lengthsMs[i] * SAMPLE_RATE / 1000).toInt())
+                    PluckSynth.Pluck(s.hz(steps[i]), (starts[i] * SAMPLE_RATE / 1000).toInt(), (lengthsMs[i] * SAMPLE_RATE / 1000).toInt())
                 }
                 PluckSynth.toPcm(synth.render(plucks, (totalMs * SAMPLE_RATE / 1000).toInt()))
             }
@@ -301,7 +340,7 @@ class JinsViewModel : ViewModel() {
         val now = SystemClock.elapsedRealtime()
         if (now < ignoreMicUntil) return
         val s = _state.value
-        val targetFrequency = s.target?.let { Pitch(it).frequency(s.a4.toDouble()) }
+        val targetFrequency = s.target?.let(s::hz)
         val update = tracker.update(reading, now) {
             val f = it.frequency.toDouble()
             if (targetFrequency != null && it.canBeOctaveLower &&

@@ -11,6 +11,9 @@ import com.udl.oud.taqsim.Taqsim
 import com.udl.oud.taqsim.TaqsimForm
 import com.udl.oud.taqsim.TaqsimGenerator
 import com.udl.oud.taqsim.TaqsimSayrs
+import com.udl.oud.turkish.TurkishGrammar
+import com.udl.oud.turkish.TurkishJins
+import com.udl.oud.turkish.TurkishJinsCatalog
 import kotlin.random.Random
 
 /**
@@ -30,15 +33,14 @@ object JinsEtude {
         )
     }
 
-    /** Where a question in this jins rests: its highest pillar above the root that fits. */
-    fun questionRest(jins: Jins): Int {
-        val high = jins.intervals.size + 1
-        return JinsGrammars.of(jins).rests.filter { it in 1..high }.maxOrNull() ?: jins.intervals.size
+    /** Where a question in this jins rests: its highest pillar above the root that fits in its [size] steps. */
+    fun questionRest(jins: Jins, size: Int = jins.intervals.size): Int {
+        val high = size + 1
+        return JinsGrammars.of(jins).rests.filter { it in 1..high }.maxOrNull() ?: size
     }
 
-    fun plan(jins: Jins, root: Int, random: Random): TaqsimSayrs.Plan {
-        val s = station(jins, root)
-        val q = questionRest(jins)
+    /** The etude's sections on station [s], the question resting on degree [q]. */
+    fun planOn(s: Station, q: Int, random: Random): TaqsimSayrs.Plan {
         val sections = mutableListOf(
             Section(SectionKind.Opening, s, listOf(PhraseRole.Open), listOf(0)),
             Section(SectionKind.Opening, s, listOf(PhraseRole.Question, PhraseRole.Answer), listOf(q, 0)),
@@ -51,8 +53,19 @@ object JinsEtude {
         return TaqsimSayrs.Plan(TaqsimForm.Classic, sections)
     }
 
+    fun plan(jins: Jins, root: Int, random: Random): TaqsimSayrs.Plan = planOn(station(jins, root), questionRest(jins), random)
+
     fun generate(jins: Jins, root: Int, seed: Long): Taqsim {
         val generator = TaqsimGenerator(seed)
         return generator.generateFrom(JinsCatalog.host(jins), plan(jins, root, Random(seed xor 0x5DEECE66DL)), detailed = false)
+    }
+
+    /** The same etude in a Turkish jins on a perde, with its koma pitches; motifs move like its Arabic analog. */
+    fun generateTurkish(jins: TurkishJins, durak: Int, seed: Long): Taqsim {
+        val size = jins.intervals.size
+        val s = TurkishJinsCatalog.station(jins, durak, low = -2, high = size + 1)
+        val analog = TurkishGrammar.analog(jins)
+        val plan = planOn(s, questionRest(analog, size), Random(seed xor 0x5DEECE66DL))
+        return TaqsimGenerator(seed).generateFrom(plan, analog, jins.name, null, detailed = false)
     }
 }

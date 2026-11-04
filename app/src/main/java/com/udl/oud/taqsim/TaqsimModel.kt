@@ -92,11 +92,11 @@ data class Station(
     /** The degree whose pitch is nearest to [step]: how a phrase carries on after a change of station. */
     fun degreeNear(step: Int): Int = (low - 7..high + 7).minBy { abs(step(it) - step) }
 
-    /** The degree nearest to a heard frequency (at A4 = 440), in any octave, and how far off in cents. */
+    /** The degree nearest to a heard frequency (at A4 = 440), counted with its octave (7 is the octave above 0), and how far off in cents. */
     fun degreeOfHz(hz: Double): Pair<Int, Double> = (0 until 7).map { d ->
         val cents = 1200 * kotlin.math.log2(hz / hz(d))
         val octaves = kotlin.math.round(cents / 1200)
-        d to cents - 1200 * octaves
+        d + 7 * octaves.toInt() to cents - 1200 * octaves
     }.minBy { abs(it.second) }
 
     /** Degrees of the jins itself, counted in the station's scale. */

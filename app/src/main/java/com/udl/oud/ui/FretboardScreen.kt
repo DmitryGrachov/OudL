@@ -114,14 +114,12 @@ private fun BoardRoute(mode: BoardMode) {
     val vm: FretboardViewModel = viewModel(key = mode.name)
     val mic = rememberMicPermission()
     val state by vm.state.collectAsStateWithLifecycle()
-    if (mode == BoardMode.Maqamat && state.oud == OudType.Turkish) {
-        TurkishMakamRoute()
-        return
-    }
     if (mode.choices.isNotEmpty() && state.selected == null) {
         LaunchedEffect(Unit) { vm.select(mode.choices.first()) }
     }
     // The maqam tab can also show one jins at a time: the building blocks on their own.
+    val turkish = state.oud == OudType.Turkish
+    val turkishVm: com.udl.oud.turkish.TurkishMakamViewModel = viewModel()
     var jinsMode by rememberSaveable { mutableStateOf(false) }
     if (mode == BoardMode.Maqamat) {
         Column(Modifier.fillMaxSize()) {
@@ -131,12 +129,15 @@ private fun BoardRoute(mode: BoardMode) {
             }
             androidx.compose.foundation.layout.Box(Modifier.weight(1f)) {
                 if (jinsMode) {
-                    JinsRoute(onOpenMaqam = { m ->
+                    JinsRoute(onOpenMakam = { m ->
+                        turkishVm.select(m)
+                        jinsMode = false
+                    }, onOpenMaqam = { m ->
                         vm.select(m)
                         jinsMode = false
                     })
                 } else {
-                    MaqamBoard(vm, state, mode, mic)
+                    if (turkish) TurkishMakamRoute(turkishVm) else MaqamBoard(vm, state, mode, mic)
                 }
             }
         }

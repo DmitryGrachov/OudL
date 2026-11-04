@@ -113,7 +113,7 @@ object AnswerCheck {
             }.distinct()
             AnswerPoint(false, hints.joinToString("; "))
         }
-        val degrees = matched.map { it.first }
+        val degrees = matched.map { Math.floorMod(it.first, 7) }
         val colour = grammar.characteristic.map { Math.floorMod(it + station.jinsRoot, 7) }
         points += if (degrees.indices.any { it !in outside && degrees[it] in colour }) {
             AnswerPoint(true, "Цвет джинса слышен: ${colour.joinToString { station.label(it) }}")
