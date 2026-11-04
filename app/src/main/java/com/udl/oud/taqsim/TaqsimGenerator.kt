@@ -30,10 +30,12 @@ class TaqsimGenerator(private val seed: Long) {
                 if (role == PhraseRole.Question) question = draft.degrees
                 if (role == PhraseRole.Answer) question = null
                 val themeBeats = draft.theme.withIndex().associate { (k, index) -> index to theme.rhythm[k % theme.rhythm.size] }
-                val beats = Timing.beats(draft.degrees, role, section.kind, station, random, themeBeats)
+                val figure = Timing.figureFor(role, random)
+                val beats = Timing.beats(draft.degrees, role, section.kind, station, random, themeBeats, figure)
                 val notes = draft.degrees.mapIndexed { n, d -> TaqsimNote(station.step(d), station.spelling(d), d, beats[n]) }
+                val how = if (figure == RhythmFigure.Flowing) draft.how else "${draft.how}; ритм: ${figure.title}"
                 phrases += TaqsimPhrase(
-                    section.kind, role, station, draft.how, notes, Timing.rest(section.kind, role, random), draft.theme.toSet(),
+                    section.kind, role, station, how, notes, Timing.rest(section.kind, role, random), draft.theme.toSet(), figure,
                 )
                 lastStep = notes.last().step
             }
@@ -349,6 +351,29 @@ object StyleRules {
  * own rhythm wherever it comes; a little rubato over all.
  */
 object Timing {
+    /** Shortest note, in beats: a quick finger, still a clear note. */
+    const val SHORTEST = 0.45
+
+    /** A phrase's rhythmic figure, suited to what it does: climbs run, cadences hesitate. */
+    fun figureFor(role: PhraseRole, random: Random): RhythmFigure {
+        val options = when (role) {
+            PhraseRole.Open -> listOf(RhythmFigure.Flowing to 2.0, RhythmFigure.Lingering to 1.5, RhythmFigure.Hesitant to 1.0)
+            PhraseRole.Climb -> listOf(RhythmFigure.Run to 2.0, RhythmFigure.Gallop to 1.0, RhythmFigure.Flowing to 1.0)
+            PhraseRole.Descend -> listOf(RhythmFigure.Run to 1.5, RhythmFigure.Dotted to 1.0, RhythmFigure.Flowing to 1.0)
+            PhraseRole.Question, PhraseRole.Answer -> listOf(
+                RhythmFigure.Dotted to 1.2, RhythmFigure.Gallop to 1.0, RhythmFigure.Flowing to 1.2, RhythmFigure.Hesitant to 0.6,
+            )
+            PhraseRole.Cadence -> listOf(RhythmFigure.Hesitant to 2.0, RhythmFigure.Flowing to 1.0, RhythmFigure.Lingering to 0.8)
+            PhraseRole.Develop -> RhythmFigure.entries.map { it to 1.0 }
+        }
+        var r = random.nextDouble() * options.sumOf { it.second }
+        for ((f, w) in options) {
+            r -= w
+            if (r <= 0) return f
+        }
+        return options.first().first
+    }
+
     fun beats(
         degrees: List<Int>,
         role: PhraseRole,
@@ -356,20 +381,39 @@ object Timing {
         station: Station,
         random: Random,
         theme: Map<Int, Double> = emptyMap(),
+        figure: RhythmFigure = RhythmFigure.Flowing,
     ): List<Double> {
         val colour = JinsGrammars.of(station.jins).characteristic.map { it + station.jinsRoot }
-        return degrees.mapIndexed { i, d ->
+        // Notes the figure shapes: not the theme's, not the first held one, not the last.
+        val free = degrees.indices.filter { it != degrees.lastIndex && it !in theme && !(it == 0 && role == PhraseRole.Open) }
+        val shaped = free.withIndex().associate { (k, i) ->
+            i to when (figure) {
+                RhythmFigure.Flowing -> if (inRun(degrees, i)) 0.7 else 1.0
+                RhythmFigure.Dotted -> if (k % 2 == 0) 1.35 else 0.55
+                RhythmFigure.Gallop -> listOf(1.3, 0.55, 0.55)[k % 3]
+                // Gathering speed: from an even note down to the quickest.
+                RhythmFigure.Run -> 1.0 - (1.0 - SHORTEST) * k / maxOf(1, free.size - 1)
+                RhythmFigure.Hesitant -> if (inRun(degrees, i)) 0.7 else 1.0
+                RhythmFigure.Lingering -> if (degrees[i] in colour) 2.0 else 0.8
+            }
+        }
+        val beats = degrees.mapIndexed { i, d ->
             val base = when {
                 i == degrees.lastIndex -> if (kind == SectionKind.Qafla) 8.0 else random.nextDouble(3.0, 5.5)
                 i in theme -> theme.getValue(i)
-                i == 0 && (role == PhraseRole.Open || random.nextDouble() < 0.25) -> random.nextDouble(1.5, 3.0)
-                d in colour && random.nextDouble() < 0.35 -> random.nextDouble(1.5, 2.2)
-                inRun(degrees, i) -> 0.7
-                else -> 1.0
+                i == 0 && role == PhraseRole.Open -> random.nextDouble(1.5, 3.0)
+                figure == RhythmFigure.Flowing && i == 0 && random.nextDouble() < 0.25 -> random.nextDouble(1.5, 3.0)
+                figure == RhythmFigure.Flowing && d in colour && random.nextDouble() < 0.35 -> random.nextDouble(1.5, 2.2)
+                else -> shaped.getValue(i)
             }
             // The theme's own rhythm gets less rubato, so it stays recognisable.
             base * if (i in theme) random.nextDouble(0.95, 1.05) else random.nextDouble(0.9, 1.1)
+        }.toMutableList()
+        // Hesitating: the note before the resting one is held, as if deciding to land.
+        if (figure == RhythmFigure.Hesitant && degrees.size >= 3 && degrees.lastIndex - 1 !in theme) {
+            beats[degrees.lastIndex - 1] = random.nextDouble(2.0, 2.6)
         }
+        return beats.map { it.coerceAtLeast(SHORTEST) }
     }
 
     /** Pause after a phrase, longer after a section's last one. */

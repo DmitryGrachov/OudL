@@ -93,8 +93,23 @@ data class TaqsimPhrase(
     val restBeats: Double,
     /** Indices of the notes that state the taqsim's theme here, if it is heard in this phrase. */
     val themeNotes: Set<Int> = emptySet(),
+    val figure: RhythmFigure = RhythmFigure.Flowing,
 ) {
     val beats: Double get() = notes.sumOf { it.beats } + restBeats
+}
+
+/**
+ * The rhythmic figure a phrase moves in. A taqsim has no beat, but it has figures: even
+ * flowing notes, a dotted swing, a long note and two short ones, a run gathering speed, a
+ * hesitation on the note before the rest, or lingering on the jins' colour note.
+ */
+enum class RhythmFigure(val title: String) {
+    Flowing("ровно"),
+    Dotted("пунктир"),
+    Gallop("долгая и две короткие"),
+    Run("пассаж с разгоном"),
+    Hesitant("задержка перед опорой"),
+    Lingering("раскачка на цветной ступени"),
 }
 
 enum class TaqsimLength(val title: String, val phrases: IntRange) {
