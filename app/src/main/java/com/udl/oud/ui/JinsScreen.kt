@@ -58,6 +58,7 @@ import com.udl.oud.jins.Appearance
 import com.udl.oud.jins.JinsCatalog
 import com.udl.oud.jins.JinsUiState
 import com.udl.oud.jins.JinsViewModel
+import com.udl.oud.taqsim.AnswerPhase
 import com.udl.oud.taqsim.JinsGrammars
 import com.udl.oud.taqsim.Motif
 import com.udl.oud.ui.theme.InTuneGreen
@@ -92,6 +93,8 @@ fun JinsRoute(onOpenMaqam: (Maqam) -> Unit, vm: JinsViewModel = viewModel()) {
             if (state.exercise != null) MotifDrillBar(state, vm) else JinsHeardBar(state, vm, mic.granted)
             JinsPicker(state, vm)
             JinsCharacter(state, vm)
+            EtudePanel(state, vm)
+            JinsAnswerPanel(state, vm)
             MotifList(state, vm)
             WhereItAppears(state, onOpenMaqam)
             Row(Modifier.fillMaxWidth().height(if (wide) 360.dp else 300.dp).padding(top = 8.dp)) {
@@ -380,4 +383,105 @@ private fun JinsStaff(state: JinsUiState, modifier: Modifier) {
         else -> MaterialTheme.colorScheme.onSurface
     }
     NoteStaff(note, name, color, hint = "записано октавой выше звука", octaveClef = true, modifier = modifier)
+}
+
+/** A short taqsim inside the jins: listen to it phrase by phrase, the sounding note lit. */
+@Composable
+private fun EtudePanel(state: JinsUiState, vm: JinsViewModel) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val etude = state.etude
+    Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Этюд в джинсе — маленький таксим на ${state.jins.intervals.size + 1} нотах",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            if (state.etudeNote != null && state.phase != AnswerPhase.Question) {
+                TextButton(onClick = vm::stop) { Text("■ Стоп") }
+            } else {
+                TextButton(onClick = vm::playEtude) { Text("▶ Слушать этюд") }
+            }
+            TextButton(onClick = vm::newEtude) { Text("✨ Новый этюд") }
+        }
+        var start = 0
+        etude.phrases.forEachIndexed { i, p ->
+            val from = start
+            start += p.notes.size
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = if (state.etudePhrase == i) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface)) {
+                            append("${i + 1}. ${p.role.title}: ")
+                        }
+                        p.notes.forEachIndexed { k, n ->
+                            val lit = state.etudeNote == from + k
+                            val style = when {
+                                lit -> SpanStyle(color = MaterialTheme.colorScheme.onPrimary, background = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
+                                k in p.themeNotes -> SpanStyle(color = MaterialTheme.colorScheme.primary)
+                                else -> SpanStyle(color = muted)
+                            }
+                            withStyle(style) { append(" ${n.spelling.label(NoteLabels.Solfege)} ") }
+                        }
+                    },
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                TextButton(onClick = { vm.playEtudePhrase(i) }) { Text("▶") }
+            }
+        }
+    }
+}
+
+/** Answer in the jins: the etude's question plays, you answer on four or five notes. */
+@Composable
+private fun JinsAnswerPanel(state: JinsUiState, vm: JinsViewModel) {
+    val question = state.etude.phrases.getOrNull(state.question) ?: return
+    val answer = state.etude.phrases.getOrNull(state.answer) ?: return
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(Modifier.fillMaxWidth().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Ответь в джинсе", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(
+            "Вопрос останавливается на ${question.notes.last().spelling.label(NoteLabels.Solfege)}. " +
+                "Ответь своей фразой из нот джинса и приди на ${answer.notes.last().spelling.label(NoteLabels.Solfege)}; " +
+                "не забудь цветную ступень ${state.colour.joinToString { state.name(it) }}.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = muted,
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            when {
+                state.phase == AnswerPhase.Question -> androidx.compose.material3.Button(onClick = vm::stop) { Text("■ Стоп") }
+                state.phase == AnswerPhase.Listening -> androidx.compose.material3.Button(onClick = vm::finishAnswer) { Text("✋ Готово") }
+                else -> androidx.compose.material3.Button(onClick = vm::playQuestion) {
+                    Text(if (state.phase == AnswerPhase.Idle) "▶ Задать вопрос" else "▶ Вопрос ещё раз")
+                }
+            }
+            TextButton(onClick = vm::playExample) { Text("💡 Пример ответа") }
+            TextButton(onClick = vm::newEtude) { Text("➡ Другой вопрос") }
+        }
+        if (state.phase == AnswerPhase.Listening) {
+            Text("Твоя очередь: играй ответ — после паузы я его разберу.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleSmall)
+        }
+        if (state.answerNotes.isNotEmpty()) {
+            Text(
+                buildAnnotatedString {
+                    state.answerNotes.forEachIndexed { i, n ->
+                        val outside = state.verdict?.outside?.contains(i) ?: false
+                        withStyle(SpanStyle(color = if (outside) MaterialTheme.colorScheme.tertiary else InTuneGreen, fontWeight = FontWeight.SemiBold)) {
+                            append(" ${Pitch(n.step).label(NoteLabels.Solfege)} ")
+                        }
+                    }
+                },
+                style = MaterialTheme.typography.titleLarge,
+            )
+        }
+        state.verdict?.points?.forEach { p ->
+            Text(
+                "${if (p.passed) "✓" else "✗"}  ${p.text}",
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (p.passed) InTuneGreen else MaterialTheme.colorScheme.tertiary,
+            )
+        }
+    }
 }

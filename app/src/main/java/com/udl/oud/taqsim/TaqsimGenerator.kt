@@ -15,8 +15,11 @@ import kotlin.random.Random
 class TaqsimGenerator(private val seed: Long) {
     private val random = Random(seed)
 
-    fun generate(maqam: Maqam, length: TaqsimLength, tonic: Int = maqam.tonic): Taqsim {
-        val plan = TaqsimSayrs.plan(maqam, length, random, tonic)
+    fun generate(maqam: Maqam, length: TaqsimLength, tonic: Int = maqam.tonic): Taqsim =
+        generateFrom(maqam, TaqsimSayrs.plan(maqam, length, random, tonic), TaqsimSayrs.isDetailed(maqam))
+
+    /** The phrases for a ready [plan]: a whole sayr, or a short etude inside one jins. */
+    fun generateFrom(maqam: Maqam, plan: TaqsimSayrs.Plan, detailed: Boolean): Taqsim {
         val theme = makeTheme(maqam)
         val phrases = mutableListOf<TaqsimPhrase>()
         var lastStep = plan.sections.first().station.step(plan.sections.first().station.focus)
@@ -84,7 +87,7 @@ class TaqsimGenerator(private val seed: Long) {
                 p
             }
         }
-        return Taqsim(maqam, seed, shaped, TaqsimSayrs.isDetailed(maqam), plan.form, theme)
+        return Taqsim(maqam, seed, shaped, detailed, plan.form, theme)
     }
 
     /** The cell as the next phrase takes it up: a step lower or higher, inverted, or answered by itself. */

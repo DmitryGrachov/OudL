@@ -301,50 +301,15 @@ class TaqsimViewModel : ViewModel() {
     private fun playRange(phrases: IntRange, loop: Boolean, onFinished: (() -> Unit)? = null) {
         stop()
         val s = _state.value
-        val pulse = s.tempo.pulseMs
-        val a4 = s.a4.toDouble()
         val first = s.phraseStarts[phrases.first]
-        val notes = phrases.flatMap { s.taqsim.phrases[it].notes }
-        // Start time and length of each note in ms, pauses between phrases included; each phrase
-        // goes at its own pace on the taqsim's arc (unhurried opening, quicker peak, broad qafla).
-        val starts = mutableListOf<Double>()
-        val lengths = mutableListOf<Double>()
-        var t = 0.0
-        phrases.forEach { pi ->
-            val phrase = s.taqsim.phrases[pi]
-            val p = pulse * phrase.tempo
-            phrase.notes.forEach { n ->
-                starts += t
-                lengths += n.beats * p
-                // A breath inside the phrase is silence after the note.
-                t += (n.beats + n.pauseAfter) * p
-            }
-            if (pi != phrases.last) t += phrase.restBeats * p
-        }
-        val totalMs = t + TAIL_MS
         _state.update { it.copy(playing = true, exercise = null) }
         playJob = viewModelScope.launch {
-            val pcm = withContext(Dispatchers.Default) {
-                // Each skeleton note becomes what the hands play: plain, or with its ornament.
-                val ornaments = s.ornaments
-                fun samples(ms: Double) = (ms * SAMPLE_RATE / 1000).toInt()
-                val plucks = notes.flatMapIndexed { i, n ->
-                    val course = OudTone.course(n.step, s.tuning)
-                    OrnamentSound.events(n.step, ornaments[first + i], starts[i], lengths[i]).map { e ->
-                        // The left hand's vibrato on a held note, coming in after it has sounded a while.
-                        val vibrato = e.lengthMs >= OudTone.VIBRATO_FROM_MS
-                        PluckSynth.Pluck(
-                            Pitch(e.step).frequency(a4), samples(e.startMs), samples(e.lengthMs), e.gain * n.velocity, e.legato,
-                            e.slideFromCents, samples(e.slideMs),
-                            brightness = OudTone.brightness(course, s.tuning),
-                            ringSeconds = OudTone.ring(course, s.tuning),
-                            vibratoCents = if (vibrato) OudTone.VIBRATO_CENTS else 0.0,
-                            vibratoDelaySamples = samples(OudTone.VIBRATO_DELAY_MS),
-                        )
-                    }
-                }
-                PluckSynth.toPcm(synth.render(plucks, (totalMs * SAMPLE_RATE / 1000).toInt(), s.taqsim.seed))
+            val rendered = withContext(Dispatchers.Default) {
+                TaqsimRenderer.render(synth, s.taqsim, phrases, s.tempo.pulseMs, s.a4.toDouble(), s.tuning, s.ornaments, SAMPLE_RATE)
             }
+            val pcm = rendered.pcm
+            val starts = rendered.starts
+            val totalMs = rendered.totalMs
             do {
                 ignoreMicUntil = Long.MAX_VALUE
                 val ticker = launch {

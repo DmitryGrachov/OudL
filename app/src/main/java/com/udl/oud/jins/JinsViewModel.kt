@@ -14,6 +14,16 @@ import com.udl.oud.fretboard.Drill
 import com.udl.oud.fretboard.Jins
 import com.udl.oud.fretboard.Pitch
 import com.udl.oud.fretboard.SteadyNote
+import com.udl.oud.taqsim.AnswerCheck
+import com.udl.oud.taqsim.AnswerPhase
+import com.udl.oud.taqsim.AnswerVerdict
+import com.udl.oud.taqsim.HeardNote
+import com.udl.oud.taqsim.NoteCollector
+import com.udl.oud.taqsim.OrnamentLevel
+import com.udl.oud.taqsim.Ornamenter
+import com.udl.oud.taqsim.PhraseRole
+import com.udl.oud.taqsim.Taqsim
+import com.udl.oud.taqsim.TaqsimRenderer
 import com.udl.oud.taqsim.JinsGrammar
 import com.udl.oud.taqsim.JinsGrammars
 import com.udl.oud.taqsim.Motif
@@ -47,9 +57,22 @@ data class JinsUiState(
     val exercise: Drill? = null,
     val drillMotif: Motif? = null,
     val showCommon: Boolean = false,
+    /** A short taqsim inside this jins, and the note of it sounding. */
+    val etude: Taqsim = JinsEtude.generate(JinsCatalog.ajnas.first(), JinsCatalog.defaultRoot(JinsCatalog.ajnas.first()), 1),
+    val etudeNote: Int? = null,
+    val phase: AnswerPhase = AnswerPhase.Idle,
+    val answerNotes: List<HeardNote> = emptyList(),
+    val verdict: AnswerVerdict? = null,
     val error: String? = null,
 ) {
     val station: Station get() = JinsCatalog.station(jins, root)
+
+    /** The etude's question and the answer after it: the answer mode asks that question. */
+    val question: Int get() = etude.phrases.indexOfFirst { it.role == PhraseRole.Question }
+    val answer: Int get() = question + 1
+
+    /** Phrase of the etude sounding now. */
+    val etudePhrase: Int? get() = etudeNote?.let { n -> etude.phrases.runningFold(0) { a, p -> a + p.notes.size }.indexOfLast { it <= n } }
     val grammar: JinsGrammar get() = JinsGrammars.of(jins)
 
     /** The jins' own notes, root to top. */
@@ -122,12 +145,91 @@ class JinsViewModel : ViewModel() {
         if (!live) stopListening()
     }
 
-    fun select(jins: Jins) = _state.update { it.copy(jins = jins, root = JinsCatalog.defaultRoot(jins), exercise = null, drillMotif = null) }
-    fun setRoot(step: Int) = _state.update { it.copy(root = step, exercise = null, drillMotif = null) }
+    fun select(jins: Jins) {
+        _state.update { it.copy(jins = jins, root = JinsCatalog.defaultRoot(jins), exercise = null, drillMotif = null) }
+        newEtude()
+    }
+
+    fun setRoot(step: Int) {
+        _state.update { it.copy(root = step, exercise = null, drillMotif = null) }
+        newEtude()
+    }
 
     /** Moves the root by [quarterTones]; within the neck. */
-    fun shiftRoot(quarterTones: Int) = _state.update {
-        it.copy(root = (it.root + quarterTones).coerceIn(ROOT_MIN, ROOT_MAX), exercise = null, drillMotif = null)
+    fun shiftRoot(quarterTones: Int) {
+        _state.update { it.copy(root = (it.root + quarterTones).coerceIn(ROOT_MIN, ROOT_MAX), exercise = null, drillMotif = null) }
+        newEtude()
+    }
+
+    // --- The etude and the answer in the jins ---
+
+    /** A new etude on the jins as it stands; the answer starts over. */
+    fun newEtude() {
+        stop()
+        val s = _state.value
+        _state.update {
+            it.copy(etude = JinsEtude.generate(s.jins, s.root, System.nanoTime()), phase = AnswerPhase.Idle, verdict = null, answerNotes = emptyList())
+        }
+    }
+
+    fun playEtude() = playTaqsim(0 until _state.value.etude.phrases.size)
+    fun playEtudePhrase(i: Int) = playTaqsim(i..i)
+
+    /** Plays the etude's question, then listens for the answer. */
+    fun playQuestion() {
+        val q = _state.value.question.takeIf { it >= 0 } ?: return
+        _state.update { it.copy(phase = AnswerPhase.Question, verdict = null, answerNotes = emptyList(), exercise = null) }
+        playTaqsim(q..q) {
+            collector = NoteCollector(_state.value.a4.toDouble())
+            _state.update { it.copy(phase = AnswerPhase.Listening) }
+        }
+    }
+
+    /** The etude's own answer, to compare. */
+    fun playExample() {
+        val back = _state.value.phase
+        playTaqsim(_state.value.answer.._state.value.answer) { _state.update { it.copy(phase = back) } }
+    }
+
+    fun finishAnswer() {
+        val s = _state.value
+        val answer = s.etude.phrases.getOrNull(s.answer) ?: return
+        val notes = collector?.finish().orEmpty()
+        collector = null
+        _state.update { it.copy(phase = AnswerPhase.Done, answerNotes = notes, verdict = AnswerCheck.evaluate(notes, answer.station, answer.notes.last().degree)) }
+    }
+
+    private var collector: NoteCollector? = null
+
+    private fun playTaqsim(phrases: IntRange, onFinished: (() -> Unit)? = null) {
+        stop()
+        val s = _state.value
+        val first = s.etude.phrases.take(phrases.first).sumOf { it.notes.size }
+        val notes = phrases.flatMap { s.etude.phrases[it].notes }
+        playJob = viewModelScope.launch {
+            val rendered = withContext(Dispatchers.Default) {
+                TaqsimRenderer.render(
+                    synth, s.etude, phrases, ETUDE_PULSE_MS, s.a4.toDouble(), s.tuning,
+                    Ornamenter.decorate(s.etude, OrnamentLevel.Light), SAMPLE_RATE,
+                )
+            }
+            ignoreMicUntil = Long.MAX_VALUE
+            val ticker = launch {
+                while (isActive) {
+                    player.positionMs()?.let { pos ->
+                        val i = rendered.starts.indexOfLast { it <= pos }.takeIf { it >= 0 && pos < rendered.totalMs - rendered.tailMs + 400 }
+                        _state.update { it.copy(etudeNote = i?.let { first + it }, playing = i?.let { notes[it].step }) }
+                    }
+                    delay(25)
+                }
+            }
+            player.play(rendered.pcm)
+            ticker.cancel()
+            ignoreMicUntil = SystemClock.elapsedRealtime() + MIC_GRACE_MS
+            tracker.reset()
+            _state.update { it.copy(etudeNote = null, playing = null) }
+            onFinished?.invoke()
+        }
     }
 
     fun toggleCommon() = _state.update { it.copy(showCommon = !it.showCommon) }
@@ -162,7 +264,7 @@ class JinsViewModel : ViewModel() {
         playJob?.cancel()
         playJob = null
         ignoreMicUntil = SystemClock.elapsedRealtime() + MIC_GRACE_MS
-        _state.update { it.copy(playing = null) }
+        _state.update { it.copy(playing = null, etudeNote = null) }
     }
 
     private fun play(steps: List<Int>, lengthsMs: List<Double>) {
@@ -208,6 +310,16 @@ class JinsViewModel : ViewModel() {
         }
         if (update.lost) _state.update { it.copy(frequency = null) }
         update.frequency?.let { f -> _state.update { it.copy(frequency = f) } }
+        // Answer: gather the notes played; a pause after a couple of real notes ends it.
+        val c = collector
+        if (s.phase == AnswerPhase.Listening && c != null) {
+            if (update.pluck) c.pluck()
+            update.steady?.let { c.steady(it, now) }
+            if (update.lost) c.silence()
+            if (c.notes.size != s.answerNotes.size) _state.update { it.copy(answerNotes = c.notes) }
+            if (c.notes.size >= 2 && now - c.lastSoundAt > END_PAUSE_MS) finishAnswer()
+            return
+        }
         if (update.pluck) {
             awaitingPluck = false
             steady.reset()
@@ -228,6 +340,8 @@ class JinsViewModel : ViewModel() {
         const val SAMPLE_RATE = 44100
         const val TAIL_MS = 900.0
         const val MIC_GRACE_MS = 600L
+        const val END_PAUSE_MS = 2200L
+        const val ETUDE_PULSE_MS = 200.0
         const val ROOT_MIN = 84 // F♯2
         const val ROOT_MAX = 120 // C4
     }
