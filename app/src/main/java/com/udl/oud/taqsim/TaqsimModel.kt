@@ -80,7 +80,14 @@ data class Section(
 }
 
 /** A note of the taqsim: [beats] long, in units of the base pulse; [degree] in its station's scale. */
-data class TaqsimNote(val step: Int, val spelling: Spelling, val degree: Int, val beats: Double)
+data class TaqsimNote(
+    val step: Int,
+    val spelling: Spelling,
+    val degree: Int,
+    val beats: Double,
+    /** How strongly it is played, 0..1. */
+    val velocity: Float = 1f,
+)
 
 /** A phrase with what it is for, how it was made, and the pause after it. */
 data class TaqsimPhrase(
@@ -94,6 +101,8 @@ data class TaqsimPhrase(
     /** Indices of the notes that state the taqsim's theme here, if it is heard in this phrase. */
     val themeNotes: Set<Int> = emptySet(),
     val figure: RhythmFigure = RhythmFigure.Flowing,
+    /** Pace of this phrase against the base pulse: above 1 slower, below quicker. */
+    val tempo: Double = 1.0,
 ) {
     val beats: Double get() = notes.sumOf { it.beats } + restBeats
 }

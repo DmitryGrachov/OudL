@@ -32,10 +32,12 @@ class TaqsimGenerator(private val seed: Long) {
                 val themeBeats = draft.theme.withIndex().associate { (k, index) -> index to theme.rhythm[k % theme.rhythm.size] }
                 val figure = Timing.figureFor(role, random)
                 val beats = Timing.beats(draft.degrees, role, section.kind, station, random, themeBeats, figure)
-                val notes = draft.degrees.mapIndexed { n, d -> TaqsimNote(station.step(d), station.spelling(d), d, beats[n]) }
+                val velocity = Expression.velocities(draft.degrees, beats, section.kind, station, random)
+                val notes = draft.degrees.mapIndexed { n, d -> TaqsimNote(station.step(d), station.spelling(d), d, beats[n], velocity[n]) }
                 val how = if (figure == RhythmFigure.Flowing) draft.how else "${draft.how}; ритм: ${figure.title}"
                 phrases += TaqsimPhrase(
                     section.kind, role, station, how, notes, Timing.rest(section.kind, role, random), draft.theme.toSet(), figure,
+                    Expression.tempo(section.kind),
                 )
                 lastStep = notes.last().step
             }
