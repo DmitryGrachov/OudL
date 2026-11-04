@@ -116,22 +116,24 @@ private fun BoardRoute(mode: BoardMode) {
     if (mode.choices.isNotEmpty() && state.selected == null) {
         LaunchedEffect(Unit) { vm.select(mode.choices.first()) }
     }
-    // The maqam tab can also show one jins at a time: the building blocks on their own.
-    var jinsMode by rememberSaveable { mutableStateOf(false) }
+    // The maqam tab can also show one jins at a time (the building blocks on their own), or the
+    // moves between them (talwin).
+    var view by rememberSaveable { mutableStateOf(0) }
     if (mode == BoardMode.Maqamat) {
         Column(Modifier.fillMaxSize()) {
             Row(Modifier.padding(start = 24.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(!jinsMode, onClick = { jinsMode = false }, label = { Text("Макамы") })
-                FilterChip(jinsMode, onClick = { jinsMode = true }, label = { Text("Джинсы") })
+                listOf("Макамы", "Джинсы", "Тальвин").forEachIndexed { i, title ->
+                    FilterChip(view == i, onClick = { view = i }, label = { Text(title) })
+                }
             }
             androidx.compose.foundation.layout.Box(Modifier.weight(1f)) {
-                if (jinsMode) {
-                    JinsRoute(onOpenMaqam = { m ->
+                when (view) {
+                    1 -> JinsRoute(onOpenMaqam = { m ->
                         vm.select(m)
-                        jinsMode = false
+                        view = 0
                     })
-                } else {
-                    MaqamBoard(vm, state, mode, mic)
+                    2 -> TalwinRoute()
+                    else -> MaqamBoard(vm, state, mode, mic)
                 }
             }
         }
