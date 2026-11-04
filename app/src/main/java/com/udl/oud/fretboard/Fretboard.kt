@@ -18,7 +18,8 @@ data class Pitch(val step: Int) {
     /** C D E F G A B without sharps or flats. */
     val isNatural: Boolean get() = !isQuarterTone && Note(step / 2).latin.length == 1
 
-    fun frequency(a4: Double): Double = a4 * 2.0.pow((step / 2.0 - 69) / 12)
+    /** As it sounds: on the grid, quarter tones moved by the [Intonation] in use. */
+    fun frequency(a4: Double): Double = a4 * 2.0.pow((step / 2.0 - 69) / 12 + Intonation.cents(step) / 1200)
 
     /** Arabic name of this exact pitch, if it has a common one. */
     val arabicName: String? get() = ARABIC_NAMES[step]
@@ -42,7 +43,10 @@ data class Pitch(val step: Int) {
         /** Nearest grid pitch; with [quarterTones] off, only semitones are considered. */
         fun nearest(frequency: Double, a4: Double, quarterTones: Boolean): Pitch {
             val semitones = 69 + 12 * log2(frequency / a4)
-            return if (quarterTones) Pitch((semitones * 2).roundToInt()) else Pitch(semitones.roundToInt() * 2)
+            if (!quarterTones) return Pitch(semitones.roundToInt() * 2)
+            // The quarter tones may sit off the grid: of the two steps around, the one sounding nearer.
+            val below = kotlin.math.floor(semitones * 2).toInt()
+            return listOf(below, below + 1).map(::Pitch).minBy { kotlin.math.abs(log2(frequency / it.frequency(a4))) }
         }
 
         fun of(note: Note) = Pitch(note.midi * 2)

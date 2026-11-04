@@ -11,6 +11,7 @@ import com.udl.oud.audio.PitchTracker
 import com.udl.oud.audio.ReferenceTone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.pow
 
 enum class TunerMode {
     /** Each string against the tuning. */
@@ -133,6 +135,28 @@ class TunerViewModel : ViewModel() {
 
     fun changeA4(delta: Int) = OudSettings.setA4((_state.value.a4 + delta).coerceIn(A4_MIN, A4_MAX))
 
+    private var sampleJob: Job? = null
+
+    /**
+     * Hear the quarter tone as the intonation puts it: Rast's first notes (До Ре Ми½♭) or
+     * Bayati's (Ре Ми½♭ Фа, the second lower with functional intonation), up and back.
+     */
+    fun playSample(bayati: Boolean) {
+        sampleJob?.cancel()
+        val a4 = _state.value.a4.toDouble()
+        val steps = if (bayati) listOf(124, 127, 130, 127, 124) else listOf(120, 124, 127, 124, 120)
+        ignoreMicUntil = SystemClock.elapsedRealtime() + steps.size * SAMPLE_NOTE_MS + 600
+        sampleJob = viewModelScope.launch(Dispatchers.Default) {
+            steps.forEach { s ->
+                val lower = if (bayati && s == 127) 2.0.pow(com.udl.oud.fretboard.Intonation.bayatiSecond / 1200) else 1.0
+                tone.play(com.udl.oud.fretboard.Pitch(s).frequency(a4) * lower, SAMPLE_NOTE_MS + 300)
+                delay(SAMPLE_NOTE_MS.toLong())
+            }
+        }
+    }
+
+    fun setIntonation(setting: IntonationSetting) = OudSettings.setIntonation(setting)
+
     fun setMode(mode: TunerMode) {
         _state.update {
             it.copy(
@@ -208,6 +232,7 @@ class TunerViewModel : ViewModel() {
 
     companion object {
         private const val A4_MIN = 425
+        private const val SAMPLE_NOTE_MS = 650
         private const val A4_MAX = 455
         private const val CAPTURE_READINGS = 12
         private const val CAPTURE_SPREAD_CENTS = 4.0

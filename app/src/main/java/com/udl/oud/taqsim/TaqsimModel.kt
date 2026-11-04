@@ -8,6 +8,7 @@ import com.udl.oud.fretboard.ScaleNote
 import com.udl.oud.fretboard.Spelling
 import com.udl.oud.fretboard.StaffNote
 import kotlin.math.abs
+import kotlin.math.pow
 
 /**
  * How the degrees of a station sound and are written. Everything the taqsim does with degrees —
@@ -38,7 +39,12 @@ data class ArabicScale(val maqam: Maqam, val tonic: Int, val descending: Boolean
     fun spelling(degree: Int): Spelling = notes[Math.floorMod(degree, 7)].spelling
     override fun label(degree: Int): String = spelling(degree).label(NoteLabels.Solfege)
     override fun staff(degree: Int): StaffNote = StaffNote.arabic(step(degree), spelling(degree))
-    override fun hz(degree: Int): Double = Pitch(step(degree)).frequency(440.0)
+    /** With functional intonation, Bayati's half-flat second sits a little lower than the grid's. */
+    override fun hz(degree: Int): Double {
+        val step = step(degree)
+        val bayati = maqam.lower == com.udl.oud.fretboard.Ajnas.Bayati && Math.floorMod(degree, 7) == 1 && step % 2 != 0
+        return Pitch(step).frequency(440.0) * if (bayati) 2.0.pow(com.udl.oud.fretboard.Intonation.bayatiSecond / 1200) else 1.0
+    }
 }
 
 /**

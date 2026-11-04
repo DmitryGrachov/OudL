@@ -377,7 +377,8 @@ internal class BoardGeometry(
         return top + rowHeight * (row + 0.5f)
     }
 
-    fun center(p: Position) = Offset(x(p.cents), y(p.course))
+    /** Where a position is drawn: quarter tones where the [com.udl.oud.fretboard.Intonation] in use puts them. */
+    fun center(p: Position) = Offset(x(p.cents + com.udl.oud.fretboard.Intonation.cents(p.pitch.step)), y(p.course))
 
     private companion object {
         /** Row height at which dots and names are drawn at full size. */

@@ -82,6 +82,8 @@ fun TunerRoute(vm: TunerViewModel = viewModel()) {
             onRestartCourse = vm::restartCourse,
             onCourseTap = vm::onCourseTap,
             onChangeA4 = vm::changeA4,
+            onPlaySample = vm::playSample,
+            onSetIntonation = vm::setIntonation,
         ),
     )
 }
@@ -93,6 +95,8 @@ class TunerActions(
     val onRestartCourse: () -> Unit,
     val onCourseTap: (Int) -> Unit,
     val onChangeA4: (Int) -> Unit,
+    val onPlaySample: (Boolean) -> Unit,
+    val onSetIntonation: (com.udl.oud.tuner.IntonationSetting) -> Unit,
 )
 
 @Composable
@@ -349,6 +353,7 @@ private fun Controls(
             Text("${state.a4} Гц", style = MaterialTheme.typography.titleMedium)
             TextButton(onClick = { actions.onChangeA4(1) }) { Text("+", fontSize = 22.sp) }
         }
+        IntonationControls(actions)
     }
 }
 
@@ -365,5 +370,58 @@ private fun CourseButton(note: Note, isTarget: Boolean, onClick: () -> Unit, mod
         Button(onClick = onClick, modifier = modifier, contentPadding = padding) { content() }
     } else {
         FilledTonalButton(onClick = onClick, modifier = modifier, contentPadding = padding) { content() }
+    }
+}
+
+/**
+ * Where the quarter tones sit: the school (theory, Egypt, Syria and Lebanon, or one's own),
+ * and functional shading — Bayati's second lower than Rast's third. Everything follows it: the
+ * board, the sound, the checks.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun IntonationControls(actions: TunerActions) {
+    val setting by com.udl.oud.tuner.OudSettings.intonation.collectAsStateWithLifecycle()
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Text("Четвертитоны", style = MaterialTheme.typography.labelLarge)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        com.udl.oud.fretboard.IntonationSchool.entries.forEach { school ->
+            FilterChip(
+                selected = setting.school == school,
+                onClick = { actions.onSetIntonation(setting.copy(school = school)) },
+                label = { Text(school.title) },
+            )
+        }
+    }
+    val offset = setting.school.cents ?: setting.custom
+    if (setting.school == com.udl.oud.fretboard.IntonationSchool.Custom) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Сдвиг четвертитонов", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            TextButton(onClick = { actions.onSetIntonation(setting.copy(custom = setting.custom - 2)) }) { Text("−", fontSize = 22.sp) }
+            Text("${if (offset > 0) "+" else ""}$offset ц", style = MaterialTheme.typography.titleMedium)
+            TextButton(onClick = { actions.onSetIntonation(setting.copy(custom = setting.custom + 2)) }) { Text("+", fontSize = 22.sp) }
+        }
+    }
+    Text(
+        "${setting.school.about} Ми½♭ над До: ${350 + offset} ц (по теории 350).",
+        style = MaterialTheme.typography.bodySmall,
+        color = muted,
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        FilterChip(
+            selected = setting.functional,
+            onClick = { actions.onSetIntonation(setting.copy(functional = !setting.functional)) },
+            label = { Text("Баяти ниже Раста") },
+        )
+        Text(
+            "  вторая ступень Баяти ещё на ${(-com.udl.oud.fretboard.Intonation.BAYATI_SECOND).toInt()} ц ниже (египетская практика, по С. Маркусу)",
+            style = MaterialTheme.typography.bodySmall,
+            color = muted,
+            modifier = Modifier.weight(1f),
+        )
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        TextButton(onClick = { actions.onPlaySample(false) }) { Text("▶ Раст: До Ре Ми½♭") }
+        TextButton(onClick = { actions.onPlaySample(true) }) { Text("▶ Баяти: Ре Ми½♭ Фа") }
     }
 }
