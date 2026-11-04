@@ -8,11 +8,9 @@ import org.junit.Test
 class SayrTest {
     private fun maqam(name: String) = Maqamat.all.first { it.name == name }
 
-    @Test fun coreMaqamatHaveASayr() {
-        listOf("Раст", "Баяти", "Хиджаз", "Саба", "Нахаванд", "Курд", "Аджам", "Сикях").forEach {
-            assertNotNull(it, Sayrs.of(maqam(it)))
-        }
-    }
+    @Test fun everyMaqamHasASayr() = Maqamat.all.forEach { assertNotNull(it.name, Sayrs.of(it)) }
+
+    @Test fun husseiniCentresOnA() = assertEquals("Ля", Spelling.of(maqam("Хусейни").let { it.tonic + it.notes()[Sayrs.of(it)!!.start].offset }).label(NoteLabels.Solfege))
 
     @Test fun everyModulationLeadsToAKnownMaqam() {
         Sayrs.all.forEach { (name, sayr) ->

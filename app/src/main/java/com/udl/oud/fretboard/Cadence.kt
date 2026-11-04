@@ -68,6 +68,58 @@ object Cadences {
             phrase("Сверху на тонику", 2 to .5, 1 to 1.0, 0 to 2.0), // G F E½♭
             phrase("Снизу через Ре", -1 to .5, 0 to .5, 1 to .5, 0 to 2.0),
         ),
+        "Махур" to listOf(
+            phrase("Спуск по Махуру", 4 to .5, 3 to .5, 2 to .5, 1 to .5, 0 to 2.0), // G F E½♭ D C
+            phrase("С вводным Си", 2 to .5, 1 to .5, 0 to .5, -1 to .5, 0 to 2.0),
+        ),
+        "Сузнак" to listOf(
+            phrase("Через Хиджаз на Соль", 6 to .5, 5 to .5, 4 to 1.0, 2 to .5, 1 to .5, 0 to 2.0), // B A♭ G E½♭ D C
+            phrase("С вводным Си", 1 to .5, 0 to .5, -1 to .5, 0 to 2.0),
+        ),
+        "Найруз" to listOf(
+            phrase("Спуск от Соль", 4 to .5, 3 to .5, 2 to .5, 1 to .5, 0 to 2.0),
+            phrase("Через Ля½♭", 5 to .5, 4 to .5, 3 to .5, 2 to .5, 1 to .5, 0 to 2.0),
+        ),
+        "Баяти шури" to listOf(
+            phrase("Спуск через Ля♭", 4 to .5, 3 to .5, 2 to .5, 1 to 1.0, 0 to 2.0), // A♭ G F E½♭ D
+            phrase("Снизу через До", -1 to .5, 0 to .5, 1 to .5, 2 to .5, 1 to .5, 0 to 2.0),
+        ),
+        "Хусейни" to listOf(
+            phrase("От Ля вниз", 4 to .5, 3 to .5, 2 to .5, 1 to .5, 0 to 2.0),
+            phrase("Вокруг Ми½♭", 1 to .5, 2 to .5, 1 to .5, 0 to .5, -1 to .5, 0 to 2.0),
+        ),
+        "Хиджазкар" to listOf(
+            phrase("Спуск через Ре♭", 3 to .5, 2 to .5, 1 to 1.0, 0 to 2.0), // F E D♭ C
+            phrase("С вводным Си", 1 to .5, 0 to .5, -1 to .5, 0 to 2.0),
+        ),
+        "Занджаран" to listOf(
+            phrase("Спуск через полтора тона", 3 to .5, 2 to .5, 1 to 1.0, 0 to 2.0),
+            phrase("С вводным Си", 2 to .5, 1 to .5, 0 to .5, -1 to .5, 0 to 2.0),
+        ),
+        "Саба замзам" to listOf(
+            phrase("Через Соль♭", 3 to .5, 2 to 1.0, 1 to .5, 0 to 2.0), // G♭ F E♭ D
+            phrase("Вокруг Фа", 1 to .5, 2 to .5, 3 to .5, 2 to .5, 1 to .5, 0 to 2.0),
+        ),
+        "Хиджазкар-курд" to listOf(
+            phrase("Тёмный спуск", 3 to .5, 2 to .5, 1 to 1.0, 0 to 2.0), // F E♭ D♭ C
+            phrase("С вводным Си", 1 to .5, 0 to .5, -1 to .5, 0 to 2.0),
+        ),
+        "Хузам" to listOf(
+            phrase("Сверху на тонику", 2 to .5, 1 to 1.0, 0 to 2.0), // G F E½♭
+            phrase("Через Ля♭", 3 to .5, 2 to .5, 1 to .5, 0 to 2.0),
+        ),
+        "Ирак" to listOf(
+            phrase("Сверху на тонику", 2 to .5, 1 to 1.0, 0 to 2.0), // D C B½♭
+            phrase("Снизу через Ля", -1 to .5, 0 to .5, 1 to .5, 0 to 2.0),
+        ),
+        "Никриз" to listOf(
+            phrase("Через полтора тона", 4 to .5, 3 to .5, 2 to .5, 1 to .5, 0 to 2.0), // G F♯ E♭ D C
+            phrase("Вокруг Фа♯", 2 to .5, 3 to .5, 2 to .5, 1 to .5, 0 to 2.0),
+        ),
+        "Нава асар" to listOf(
+            phrase("Через полтора тона", 3 to .5, 2 to .5, 1 to 1.0, 0 to 2.0), // F♯ E♭ D C
+            phrase("С вводным Си", 1 to .5, 0 to .5, -1 to .5, 0 to 2.0),
+        ),
     )
 
     fun of(maqam: Maqam): List<Cadence> = byName[maqam.name].orEmpty()

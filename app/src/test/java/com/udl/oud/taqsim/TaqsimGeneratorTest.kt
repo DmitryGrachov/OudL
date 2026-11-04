@@ -103,8 +103,15 @@ class TaqsimGeneratorTest {
             val first = TaqsimGenerator(s).generate(saba, TaqsimLength.Medium).phrases.first()
             assertEquals(2, first.notes.last().degree) // Saba settles on its third degree, F
         }
-        val basic = Maqamat.all.first { it.name == "Хузам" }
-        assertTrue(seeds.none { s -> TaqsimGenerator(s).generate(basic, TaqsimLength.Long).phrases.any { it.section == SectionKind.Modulation } })
+    }
+
+    @Test fun everyMaqamHasAWrittenSayrAndUsesItsModulations() {
+        Maqamat.all.forEach { m ->
+            assertTrue(m.name, TaqsimSayrs.isDetailed(m))
+            val stations = TaqsimSayrs.Stations(m, m.tonic)
+            assertTrue("${m.name}: no modulation fits the neck", stations.modulations.isNotEmpty())
+            assertTrue(m.name, seeds.any { s -> TaqsimGenerator(s).generate(m, TaqsimLength.Medium).phrases.any { it.section == SectionKind.Modulation } })
+        }
     }
 
     @Test fun theColourNoteIsHeard() {

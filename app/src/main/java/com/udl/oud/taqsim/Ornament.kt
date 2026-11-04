@@ -7,7 +7,7 @@ import kotlin.random.Random
 /** The ornaments an oud player puts on the skeleton of a phrase. */
 enum class OrnamentKind(val sign: String, val title: String) {
     Tremolo("≋", "тремоло ришей"),
-    Trill("tr", "трель"),
+    Trill("ᵗʳ", "трель"),
     Mordent("∽", "мордент"),
     GraceAbove("↘", "форшлаг сверху"),
     GraceBelow("↗", "форшлаг снизу"),

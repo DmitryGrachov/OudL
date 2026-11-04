@@ -15,11 +15,14 @@ class CadenceTest {
         return cadence.steps(m, m.tonic).joinToString(" ") { byClass.getValue(it.mod(24)).spelling.label(NoteLabels.Solfege) }
     }
 
-    @Test fun coreMaqamatHaveCadences() {
-        listOf("Раст", "Баяти", "Хиджаз", "Саба", "Нахаванд", "Курд", "Аджам", "Сикях").forEach {
-            assertTrue(it, Cadences.of(maqam(it)).isNotEmpty())
-        }
-    }
+    @Test fun everyMaqamHasCadences() = Maqamat.all.forEach { assertTrue(it.name, Cadences.of(it).isNotEmpty()) }
+
+    @Test fun hijazkarComesDownThroughDFlat() = assertEquals("Фа Ми Ре♭ До", spelled("Хиджазкар", "Спуск через Ре♭"))
+
+    @Test fun suznakComesDownThroughHijazOnG() =
+        assertEquals("Си Ля♭ Соль Ми½♭ Ре До", spelled("Сузнак", "Через Хиджаз на Соль"))
+
+    @Test fun iraqRestsOnBHalfFlat() = assertEquals("Ре До Си½♭", spelled("Ирак", "Сверху на тонику"))
 
     @Test fun everyCadenceEndsOnTheTonicAndStaysNearIt() {
         Cadences.all.forEach { (name, cadences) ->
