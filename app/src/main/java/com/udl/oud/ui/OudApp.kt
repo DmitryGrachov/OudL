@@ -23,6 +23,7 @@ private enum class Destination(val title: String, val glyph: String) {
     Tuner("Тюнер", "♪"),
     Fretboard("Гриф", "≡"),
     Maqamat("Макамы", "♮"),
+    Taqsim("Таксим", "✦"),
     Scales("Гаммы", "♯"),
     Practice("Практика", "◉"), // drone and rhythm; the full name doesn't fit the rail
     Metronome("Метроном", "♩"),
@@ -37,6 +38,7 @@ fun OudApp() {
             Destination.Tuner -> TunerRoute()
             Destination.Fretboard -> FretboardRoute()
             Destination.Maqamat -> MaqamRoute()
+            Destination.Taqsim -> TaqsimRoute()
             Destination.Scales -> WesternScaleRoute()
             Destination.Practice -> PracticeRoute()
             Destination.Metronome -> MetronomeRoute()
