@@ -117,13 +117,19 @@ private fun DrawScope.drawStaff(note: StaffNote?, color: Color, lineColor: Color
 }
 
 internal fun DrawScope.drawAccidental(note: StaffNote, at: Offset, h: Float, color: Color, stroke: Float, measurer: TextMeasurer) {
-    fun glyph(text: String, mirrored: Boolean = false, raise: Float = 0f) {
+    fun glyph(text: String, mirrored: Boolean = false, raise: Float = 0f, slashed: Boolean = false) {
         val g = measurer.measure(text, TextStyle(fontSize = (h * 4.2f).toSp(), color = color))
         val topLeft = Offset(at.x - g.size.width / 2f, at.y - g.size.height / 2f - raise)
         if (mirrored) {
             scale(-1f, 1f, pivot = Offset(at.x, at.y)) { drawText(g, topLeft = topLeft) }
         } else {
             drawText(g, topLeft = topLeft)
+        }
+        // The Arabic half-flat: a flat with a stroke across its stem.
+        if (slashed) {
+            val stemX = at.x - g.size.width * 0.18f
+            val y = topLeft.y + g.size.height * 0.42f
+            drawLine(color, Offset(stemX - h * 1.0f, y + h * 0.55f), Offset(stemX + h * 1.0f, y - h * 0.55f), stroke * 1.8f)
         }
         // Turkish notation counts the komas the sign is worth.
         note.komas?.let { k ->
@@ -134,7 +140,7 @@ internal fun DrawScope.drawAccidental(note: StaffNote, at: Offset, h: Float, col
     when (note.accidental) {
         Accidental.None -> Unit
         Accidental.Flat -> glyph("♭", raise = h * 1.1f)
-        Accidental.HalfFlat -> glyph("♭", mirrored = true, raise = h * 1.1f)
+        Accidental.HalfFlat -> glyph("♭", raise = h * 1.1f, slashed = true)
         Accidental.Sharp -> glyph("♯", raise = h * 0.6f)
         Accidental.HalfSharp -> {
             // A sharp with one upright: two rising bars crossed by a single stem.
