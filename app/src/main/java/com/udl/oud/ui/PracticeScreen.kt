@@ -188,11 +188,12 @@ private fun Strokes(state: PracticeUiState) {
             val color = when (stroke) {
                 Stroke.Dum -> MaterialTheme.colorScheme.primary
                 Stroke.Tak -> MaterialTheme.colorScheme.tertiary
+                Stroke.Ka -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.6f)
                 Stroke.Rest -> MaterialTheme.colorScheme.outline
             }
             Box(
                 Modifier
-                    .size(if (stroke == Stroke.Rest) 36.dp else 44.dp)
+                    .size(if (stroke == Stroke.Rest || stroke == Stroke.Ka) 36.dp else 44.dp)
                     .align(Alignment.CenterVertically)
                     .then(if (now) Modifier.background(color, CircleShape) else Modifier)
                     .border(if (onBeat) 3.dp else 1.5.dp, color, CircleShape),
@@ -202,6 +203,7 @@ private fun Strokes(state: PracticeUiState) {
                     when (stroke) {
                         Stroke.Dum -> "D"
                         Stroke.Tak -> "T"
+                        Stroke.Ka -> "t"
                         Stroke.Rest -> "·"
                     },
                     fontWeight = FontWeight.Bold,

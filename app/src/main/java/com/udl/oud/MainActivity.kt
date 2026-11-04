@@ -15,6 +15,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         OudSettings.init(this)
         EarProgress.init(this)
+        com.udl.oud.rhythm.RhythmPrefs.init(this)
         enableEdgeToEdge()
         // The screen must not dim while both hands are on the instrument.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
