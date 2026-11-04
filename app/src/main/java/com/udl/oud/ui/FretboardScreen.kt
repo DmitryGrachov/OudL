@@ -121,6 +121,32 @@ private fun BoardRoute(mode: BoardMode) {
     if (mode.choices.isNotEmpty() && state.selected == null) {
         LaunchedEffect(Unit) { vm.select(mode.choices.first()) }
     }
+    // The maqam tab can also show one jins at a time: the building blocks on their own.
+    var jinsMode by rememberSaveable { mutableStateOf(false) }
+    if (mode == BoardMode.Maqamat) {
+        Column(Modifier.fillMaxSize()) {
+            Row(Modifier.padding(start = 24.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(!jinsMode, onClick = { jinsMode = false }, label = { Text("Макамы") })
+                FilterChip(jinsMode, onClick = { jinsMode = true }, label = { Text("Джинсы") })
+            }
+            androidx.compose.foundation.layout.Box(Modifier.weight(1f)) {
+                if (jinsMode) {
+                    JinsRoute(onOpenMaqam = { m ->
+                        vm.select(m)
+                        jinsMode = false
+                    })
+                } else {
+                    MaqamBoard(vm, state, mode, mic)
+                }
+            }
+        }
+        return
+    }
+    MaqamBoard(vm, state, mode, mic)
+}
+
+@Composable
+private fun MaqamBoard(vm: FretboardViewModel, state: FretboardUiState, mode: BoardMode, mic: MicPermission) {
     if (mic.granted && state.live) {
         LifecycleResumeEffect(Unit) {
             @Suppress("MissingPermission")
