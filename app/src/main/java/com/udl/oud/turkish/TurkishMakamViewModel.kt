@@ -42,11 +42,13 @@ data class TurkishMakamUiState(
     val tuning: Tuning = OudSettings.tuning.value,
     val a4: Int = OudSettings.a4.value,
     val ahenk: Ahenk = OudSettings.ahenk.value,
+    /** Show the note being played on a staff beside the board. */
+    val showStaff: Boolean = true,
     val extended: Boolean = false,
     val live: Boolean = true,
     val frequency: Double? = null,
-    /** Written pitch the app is sounding now, to light it up. */
-    val playing: Int? = null,
+    /** Tone the app is sounding now, to light it up. */
+    val playing: TurkishTone? = null,
     /** Drill: steps index into [drillTones]. */
     val exercise: Drill? = null,
     val drillTones: List<TurkishTone> = emptyList(),
@@ -168,6 +170,7 @@ class TurkishMakamViewModel : ViewModel() {
     fun toggleSeyir() = _state.update { it.copy(seyirOpen = !it.seyirOpen) }
     fun setLabels(labels: TurkishLabels) = _state.update { it.copy(labels = labels) }
     fun toggleExtended() = _state.update { it.copy(extended = !it.extended) }
+    fun toggleStaff() = _state.update { it.copy(showStaff = !it.showStaff) }
     fun setAhenk(ahenk: Ahenk) = OudSettings.setAhenk(ahenk)
 
     /** Follows a geçki from the seyir, remembering where it came from. */
@@ -244,7 +247,7 @@ class TurkishMakamViewModel : ViewModel() {
         playJob = viewModelScope.launch(Dispatchers.Default) {
             try {
                 tones.forEachIndexed { i, t ->
-                    _state.update { it.copy(playing = t.written) }
+                    _state.update { it.copy(playing = t) }
                     tone.play(s.frequencyOf(t), toneMs[i].toInt())
                     delay(noteMs[i])
                 }

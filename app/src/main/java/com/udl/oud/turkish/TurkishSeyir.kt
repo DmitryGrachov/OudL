@@ -1,6 +1,8 @@
 package com.udl.oud.turkish
 
+import com.udl.oud.fretboard.Accidental
 import com.udl.oud.fretboard.PhraseNote
+import com.udl.oud.fretboard.StaffNote
 import com.udl.oud.tuner.Ahenk
 
 /** A written pitch with its spelling: a makam degree in some octave, its descending form, or a yeden. */
@@ -11,6 +13,17 @@ data class TurkishTone(val written: Int, val spelling: TurkishSpelling) {
 
     /** Same pitch class, whatever the octave. */
     fun sameClass(other: TurkishTone) = Math.floorMod(written - other.written, Koma.PER_OCTAVE) == 0
+
+    /** As Turkish notation writes it: the written pitch, with ♭ or ♯ and the number of komas. */
+    fun staffNote(): StaffNote {
+        val octave = Math.floorDiv(written - spelling.alter, Koma.PER_OCTAVE)
+        val accidental = when {
+            spelling.alter < 0 -> Accidental.Flat
+            spelling.alter > 0 -> Accidental.Sharp
+            else -> Accidental.None
+        }
+        return StaffNote(spelling.letter, octave, accidental, komas = kotlin.math.abs(spelling.alter).takeIf { it != 0 })
+    }
 }
 
 /** Seyir direction: where development starts and which way it goes. */

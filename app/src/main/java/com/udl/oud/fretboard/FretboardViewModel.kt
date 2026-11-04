@@ -35,6 +35,8 @@ data class FretboardUiState(
     val showAccidentals: Boolean = true,
     val showQuarterTones: Boolean = false,
     val showFingers: Boolean = false,
+    /** Show the note being played on a staff beside the board. */
+    val showStaff: Boolean = true,
     /** Bass course at the top, as the neck looks to the player holding the oud. */
     val bassOnTop: Boolean = true,
     /** Show positions past the neck, over the body, up to the octave. */
@@ -160,6 +162,7 @@ class FretboardViewModel : ViewModel() {
     fun toggleAccidentals() = _state.update { it.copy(showAccidentals = !it.showAccidentals) }
     fun toggleQuarterTones() = _state.update { it.copy(showQuarterTones = !it.showQuarterTones) }
     fun toggleFingers() = _state.update { it.copy(showFingers = !it.showFingers) }
+    fun toggleStaff() = _state.update { it.copy(showStaff = !it.showStaff) }
     fun flip() = _state.update { it.copy(bassOnTop = !it.bassOnTop) }
     fun toggleExtended() = _state.update { it.copy(extended = !it.extended) }
     fun setOnlyCourse(course: Int?) = _state.update { it.copy(onlyCourse = course) }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -67,6 +68,7 @@ import com.udl.oud.fretboard.FretboardViewModel
 import com.udl.oud.fretboard.Maqam
 import com.udl.oud.fretboard.Maqamat
 import com.udl.oud.fretboard.Sayrs
+import com.udl.oud.fretboard.StaffNote
 import com.udl.oud.fretboard.Spelling
 import com.udl.oud.fretboard.Scale
 import com.udl.oud.fretboard.ScaleGroup
@@ -143,6 +145,8 @@ private fun FretboardScreen(
     var optionsOpen by rememberSaveable(mode) { mutableStateOf(!scaleMode) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 600.dp
+        // A narrow staff in portrait leaves the board its width.
+        val staffWidth = if (maxWidth >= 900.dp) 200.dp else 120.dp
         // On tablets the navigation rail already names the screen; the board needs the height.
         Scaffold(topBar = { if (!wide) TopAppBar(title = { Text(mode.title) }) }) { padding ->
             val content: @Composable (Modifier) -> Unit = { boardModifier ->
@@ -160,7 +164,10 @@ private fun FretboardScreen(
                 if (scaleMode) ScaleBar(state, vm, mode.groups)
                 if (scaleMode && state.sayrOpen) (state.selected as? Maqam)?.let { SayrPanel(state, vm, it) }
                 if (optionsOpen) Options(state, vm, scaleMode)
-                FretboardCanvas(state, onTap = vm::play, modifier = boardModifier)
+                Row(boardModifier) {
+                    FretboardCanvas(state, onTap = vm::play, modifier = Modifier.weight(1f).fillMaxHeight())
+                    if (state.showStaff) BoardStaff(state, Modifier.width(staffWidth).fillMaxHeight().padding(start = 8.dp))
+                }
             }
             if (wide) {
                 Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 24.dp, vertical = 8.dp)) {
@@ -291,6 +298,7 @@ private fun Options(state: FretboardUiState, vm: FretboardViewModel, scaleMode: 
             }
         }
         FilterChip(state.showFingers, onClick = vm::toggleFingers, label = { Text("Пальцы") })
+        FilterChip(state.showStaff, onClick = vm::toggleStaff, label = { Text("Ноты") })
         FilterChip(!state.bassOnTop, onClick = vm::flip, label = { Text("Бас снизу") })
         FilterChip(state.extended, onClick = vm::toggleExtended, label = { Text("Дальше шейки") })
         if (state.live) {
@@ -911,4 +919,34 @@ private fun SayrPanel(state: FretboardUiState, vm: FretboardViewModel, maqam: Ma
             }
         }
     }
+}
+
+/**
+ * The note on a staff beside the board: what the app is sounding, else what the drill asks for,
+ * else what the mic hears. A maqam degree keeps the maqam's own spelling.
+ */
+@Composable
+private fun BoardStaff(state: FretboardUiState, modifier: Modifier) {
+    val heard = state.heard
+    val heardStep = heard?.let { (positions, _) ->
+        positions.firstOrNull()?.pitch?.step
+            ?: state.frequency?.let { Pitch.nearest(it, state.a4.toDouble(), state.snapToQuarterTones).step }
+    }
+    val step = state.playingStep ?: state.exercise?.target ?: heardStep
+    val scale = state.degrees
+    val note = step?.let { s -> scale?.get(s.mod(24))?.spelling?.let { StaffNote.arabic(s, it) } ?: StaffNote.arabic(s) }
+    val color = when {
+        step == null -> MaterialTheme.colorScheme.onSurfaceVariant
+        step != heardStep || heard == null -> MaterialTheme.colorScheme.primary
+        abs(heard.second) <= FretboardUiState.IN_TUNE_CENTS -> InTuneGreen
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    NoteStaff(
+        note,
+        step?.let { state.labelFor(Pitch(it), scale) },
+        color,
+        hint = "записано октавой выше звука",
+        octaveClef = true,
+        modifier = modifier,
+    )
 }

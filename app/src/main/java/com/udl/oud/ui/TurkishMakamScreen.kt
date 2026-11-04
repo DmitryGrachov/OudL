@@ -11,11 +11,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
@@ -89,12 +91,17 @@ fun TurkishMakamRoute(vm: TurkishMakamViewModel = viewModel()) {
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 600.dp
+        // A narrow staff in portrait leaves the board its width.
+        val staffWidth = if (maxWidth >= 900.dp) 200.dp else 120.dp
         Scaffold(topBar = { if (!wide) TopAppBar(title = { Text("Макамы") }) }) { padding ->
             val content: @Composable (Modifier) -> Unit = { boardModifier ->
                 if (state.exercise != null) TurkishExercise(state, vm) else TurkishHeardBar(state, vm, mic.granted)
                 TurkishMakamBar(state, vm)
                 if (state.seyirOpen) SeyirPanel(state, vm)
-                TurkishBoardCanvas(state, vm, boardModifier)
+                Row(boardModifier) {
+                    TurkishBoardCanvas(state, vm, Modifier.weight(1f).fillMaxHeight())
+                    if (state.showStaff) TurkishStaff(state, Modifier.width(staffWidth).fillMaxHeight().padding(start = 8.dp))
+                }
             }
             if (wide && !state.seyirOpen) {
                 Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 24.dp, vertical = 8.dp)) {
@@ -205,6 +212,7 @@ private fun TurkishMakamBar(state: TurkishMakamUiState, vm: TurkishMakamViewMode
                 AssistChip(onClick = { vm.select(named) }, label = { Text("= ${named.turkishName}") })
             }
             AhenkMenu(state.ahenk, vm::setAhenk)
+            FilterChip(state.showStaff, onClick = vm::toggleStaff, label = { Text("Ноты") })
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = vm::playScale) { Text("▶ Сыграть") }
@@ -230,7 +238,7 @@ private fun TurkishMakamBar(state: TurkishMakamUiState, vm: TurkishMakamViewMode
                     val degree = state.degreeOf(tone)
                     val isUpper = degree != null && degree != 0 && state.degrees[degree].upper
                     val style = when {
-                        state.playing == tone.written -> SpanStyle(
+                        state.playing?.written == tone.written -> SpanStyle(
                             color = MaterialTheme.colorScheme.onPrimary,
                             background = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.Bold,
@@ -473,7 +481,7 @@ private fun TurkishBoardCanvas(state: TurkishMakamUiState, vm: TurkishMakamViewM
         marks.forEach { mark ->
             val t = mark.tone
             val highlight = when {
-                t.written == state.playing || t.written == state.target?.written -> colors.playing
+                t.written == state.playing?.written || t.written == state.target?.written -> colors.playing
                 heard != null && t.written == heard.tone.written -> colors.heard
                 else -> null
             }
@@ -519,4 +527,25 @@ private fun DrawScope.drawMark(
     )
     val gap = (if (ring != null || tonic) 7.dp else 3.dp).toPx() * g.dotScale
     drawText(label, topLeft = Offset(center.x - label.size.width / 2f, center.y + radius + gap))
+}
+
+/** The note in Turkish notation beside the board: sounding, asked for by the drill, or heard. */
+@Composable
+private fun TurkishStaff(state: TurkishMakamUiState, modifier: Modifier) {
+    val heard = state.heard?.takeIf { abs(it.cents) <= TurkishMakamUiState.OUTSIDE_CENTS }
+    val tone = state.playing ?: state.target ?: heard?.tone
+    val color = when {
+        tone == null -> MaterialTheme.colorScheme.onSurfaceVariant
+        heard == null || tone != heard.tone -> MaterialTheme.colorScheme.primary
+        abs(heard.cents) <= TurkishMakamUiState.IN_TUNE_CENTS -> InTuneGreen
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    NoteStaff(
+        tone?.staffNote(),
+        tone?.let(state::labelOf),
+        color,
+        hint = "турецкая запись; в ${state.ahenk.title} звучит ниже",
+        octaveClef = false,
+        modifier = modifier,
+    )
 }
