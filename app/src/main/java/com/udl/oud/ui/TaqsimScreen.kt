@@ -58,6 +58,7 @@ import com.udl.oud.fretboard.Pitch
 import com.udl.oud.fretboard.StaffNote
 import com.udl.oud.taqsim.AnswerLevel
 import com.udl.oud.taqsim.AnswerPhase
+import com.udl.oud.taqsim.DroneMode
 import com.udl.oud.taqsim.JinsGrammars
 import com.udl.oud.taqsim.OrnamentKind
 import com.udl.oud.taqsim.OrnamentLevel
@@ -87,35 +88,54 @@ fun TaqsimRoute(vm: TaqsimViewModel = viewModel()) {
             }
         }
     }
+    // The drone sounds only while the tab is in view.
+    LifecycleResumeEffect(Unit) {
+        vm.resumeDrone()
+        onPauseOrDispose { vm.pauseDrone() }
+    }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 600.dp
         val staffWidth = if (maxWidth >= 900.dp) 200.dp else 120.dp
+        val panel: @Composable () -> Unit = {
+            if (state.exercise != null) RepeatBar(state, vm) else TaqsimHeardBar(state, vm, mic.granted)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Режим", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
+                TaqsimMode.entries.forEach { m ->
+                    FilterChip(state.mode == m, onClick = { vm.setMode(m) }, label = { Text(m.title) })
+                }
+            }
+            MaqamPicker(state, vm)
+            if (state.mode == TaqsimMode.Listen) {
+                TaqsimControls(state, vm)
+                PhraseStrip(state, vm)
+                PhraseDetail(state, vm)
+            } else {
+                AnswerPanel(state, vm)
+            }
+        }
         Scaffold(topBar = { if (!wide) TopAppBar(title = { Text("Таксим") }) }) { padding ->
             Column(
                 Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState())
                     .padding(horizontal = if (wide) 24.dp else 16.dp, vertical = 8.dp),
             ) {
-                if (state.exercise != null) RepeatBar(state, vm) else TaqsimHeardBar(state, vm, mic.granted)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Режим", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
-                    TaqsimMode.entries.forEach { m ->
-                        FilterChip(state.mode == m, onClick = { vm.setMode(m) }, label = { Text(m.title) })
-                    }
-                }
-                MaqamPicker(state, vm)
-                if (state.mode == TaqsimMode.Listen) {
-                    TaqsimControls(state, vm)
-                    PhraseStrip(state, vm)
-                    PhraseDetail(state, vm)
-                } else {
-                    AnswerPanel(state, vm)
-                }
+                panel()
                 Row(Modifier.fillMaxWidth().height(if (wide) 360.dp else 300.dp).padding(top = 8.dp)) {
                     TaqsimBoard(state, Modifier.weight(1f).fillMaxHeight())
                     TaqsimStaff(state, Modifier.width(staffWidth).fillMaxHeight().padding(start = 8.dp))
                 }
             }
         }
+    }
+}
+
+/** Drone under the taqsim: off, tonic, tonic and fifth; and whether it follows modulations. */
+@Composable
+private fun DroneChips(state: TaqsimUiState, vm: TaqsimViewModel) {
+    DroneMode.entries.forEach { d ->
+        FilterChip(state.drone == d, onClick = { vm.setDrone(d) }, label = { Text(d.title) })
+    }
+    if (state.drone != DroneMode.Off) {
+        FilterChip(state.droneFollows, onClick = vm::toggleDroneFollows, label = { Text("за переходами") })
     }
 }
 
@@ -209,6 +229,8 @@ private fun TaqsimControls(state: TaqsimUiState, vm: TaqsimViewModel) {
         }
         Text("·", Modifier.align(Alignment.CenterVertically), color = MaterialTheme.colorScheme.outline)
         OrnamentChips(state, vm)
+        Text("·", Modifier.align(Alignment.CenterVertically), color = MaterialTheme.colorScheme.outline)
+        DroneChips(state, vm)
     }
     TaqsimOutline(state)
 }
@@ -431,6 +453,8 @@ private fun AnswerPanel(state: TaqsimUiState, vm: TaqsimViewModel) {
             }
             Text("·", Modifier.align(Alignment.CenterVertically), color = MaterialTheme.colorScheme.outline)
             OrnamentChips(state, vm)
+            Text("·", Modifier.align(Alignment.CenterVertically), color = MaterialTheme.colorScheme.outline)
+            DroneChips(state, vm)
         }
         Text(
             buildAnnotatedString {

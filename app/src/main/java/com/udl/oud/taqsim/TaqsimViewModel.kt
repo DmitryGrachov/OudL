@@ -5,6 +5,8 @@ import android.os.SystemClock
 import androidx.annotation.RequiresPermission
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.udl.oud.audio.Drone
+import com.udl.oud.audio.LoopTrack
 import com.udl.oud.audio.MicPitchSource
 import com.udl.oud.audio.PcmPlayer
 import com.udl.oud.audio.PitchReading
@@ -53,6 +55,13 @@ enum class AnswerLevel(val title: String, val section: SectionKind?) {
 
 enum class AnswerPhase { Idle, Question, Listening, Done }
 
+/** A drone under the taqsim, as on a lesson: off, the tonic, or the tonic with its fifth. */
+enum class DroneMode(val title: String) {
+    Off("Без бурдона"),
+    Tonic("Бурдон: тоника"),
+    TonicFifth("Тоника и квинта"),
+}
+
 data class TaqsimUiState(
     val mode: TaqsimMode = TaqsimMode.Listen,
     val answerLevel: AnswerLevel = AnswerLevel.Low,
@@ -67,6 +76,9 @@ data class TaqsimUiState(
     val length: TaqsimLength = TaqsimLength.Medium,
     val tempo: TaqsimTempo = TaqsimTempo.Normal,
     val ornamentLevel: OrnamentLevel = OrnamentLevel.Light,
+    val drone: DroneMode = DroneMode.Off,
+    /** The drone moves to the new tonic during a modulation, and back. */
+    val droneFollows: Boolean = true,
     val taqsim: Taqsim = TaqsimGenerator(1).generate(Maqamat.all.first(), TaqsimLength.Medium),
     /** Index into [Taqsim.notes] of the note sounding, or null when silent. */
     val playingNote: Int? = null,
@@ -132,6 +144,10 @@ class TaqsimViewModel : ViewModel() {
     val state = _state.asStateFlow()
 
     private val synth = PluckSynth(SAMPLE_RATE)
+    private val droneTrack = LoopTrack()
+    /** Tonic the drone sounds now (grid step), or null when silent. */
+    private var droneAt: Int? = null
+    private var droneJob: Job? = null
     private val player = PcmPlayer(SAMPLE_RATE)
     private val mic = MicPitchSource()
     private val tracker = PitchTracker()
@@ -176,6 +192,7 @@ class TaqsimViewModel : ViewModel() {
     fun select(maqam: Maqam) {
         _state.update { it.copy(maqam = maqam) }
         regenerate()
+        refreshDrone()
     }
 
     fun setLength(length: TaqsimLength) {
@@ -185,6 +202,51 @@ class TaqsimViewModel : ViewModel() {
 
     fun setTempo(tempo: TaqsimTempo) = _state.update { it.copy(tempo = tempo) }
     fun setOrnamentLevel(level: OrnamentLevel) = _state.update { it.copy(ornamentLevel = level) }
+
+    // --- Drone ---
+
+    fun setDrone(mode: DroneMode) {
+        _state.update { it.copy(drone = mode) }
+        droneAt = null
+        refreshDrone()
+    }
+
+    fun toggleDroneFollows() {
+        _state.update { it.copy(droneFollows = !it.droneFollows) }
+        refreshDrone()
+    }
+
+    /** Leaving the tab: the drone stops; coming back: it starts again if it was on. */
+    fun pauseDrone() {
+        droneJob?.cancel()
+        droneTrack.stop()
+        droneAt = null
+    }
+
+    fun resumeDrone() = refreshDrone()
+
+    /** The tonic the drone should hold now: the maqam's, or during a modulation the new one's. */
+    private fun droneTonic(s: TaqsimUiState): Int {
+        val phrase = s.playingPhrase?.let { s.taqsim.phrases[it] }
+        return if (s.droneFollows && phrase?.section == SectionKind.Modulation) phrase.station.tonic else s.maqam.tonic
+    }
+
+    private fun refreshDrone() {
+        val s = _state.value
+        if (s.drone == DroneMode.Off) {
+            pauseDrone()
+            return
+        }
+        val tonic = droneTonic(s)
+        if (tonic == droneAt) return
+        droneAt = tonic
+        droneJob?.cancel()
+        droneJob = viewModelScope.launch(Dispatchers.Default) {
+            // An octave under the tonic, soft, so the oud sits on top of it.
+            val pcm = Drone.render(Pitch(tonic - 24).frequency(s.a4.toDouble()), s.drone == DroneMode.TonicFifth)
+            droneTrack.play(pcm, DRONE_VOLUME)
+        }
+    }
 
     /** A new taqsim on the same maqam. */
     fun regenerate() {
@@ -211,6 +273,7 @@ class TaqsimViewModel : ViewModel() {
         // The speaker's last note still rings for a moment; don't take it for the oud.
         ignoreMicUntil = SystemClock.elapsedRealtime() + MIC_GRACE_MS
         _state.update { it.copy(playing = false, playingNote = null) }
+        refreshDrone()
     }
 
     /** "Repeat the phrase": the drill goes note by note through it, at the player's own pace. */
@@ -353,6 +416,7 @@ class TaqsimViewModel : ViewModel() {
                         if (pos != null) {
                             val i = starts.indexOfLast { it <= pos }.takeIf { it >= 0 && pos < totalMs - TAIL_MS + 400 }
                             _state.update { it.copy(playingNote = i?.let { first + it }) }
+                            refreshDrone()
                         }
                         delay(TICK_MS)
                     }
@@ -366,6 +430,7 @@ class TaqsimViewModel : ViewModel() {
             tracker.reset()
             _state.update { it.copy(playing = false, playingNote = null) }
             onFinished?.invoke()
+            refreshDrone()
         }
     }
 
@@ -407,6 +472,7 @@ class TaqsimViewModel : ViewModel() {
 
     override fun onCleared() {
         playJob?.cancel()
+        pauseDrone()
     }
 
     private companion object {
@@ -416,5 +482,6 @@ class TaqsimViewModel : ViewModel() {
         const val LOOP_PAUSE_MS = 900L
         const val MIC_GRACE_MS = 600L
         const val END_PAUSE_MS = 2200L
+        const val DRONE_VOLUME = 0.3f
     }
 }
