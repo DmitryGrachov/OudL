@@ -75,7 +75,7 @@ object TaqsimSayrs {
     }
 
     /**
-     * The sections of a taqsim over any set of stations (an Arabic maqam's, a Turkish makam's),
+     * The sections of a taqsim over any set of stations,
      * in the form [chooseForm] picks.
      */
     fun planFrom(s: SayrStations, length: TaqsimLength, random: Random, chooseForm: () -> TaqsimForm): Plan {

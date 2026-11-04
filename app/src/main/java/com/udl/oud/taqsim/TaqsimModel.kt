@@ -10,15 +10,14 @@ import com.udl.oud.fretboard.StaffNote
 import kotlin.math.abs
 
 /**
- * How the degrees of a station sound and are written: an Arabic maqam on the quarter-tone grid,
- * or a Turkish makam on the 53-koma grid. Everything the taqsim does with degrees — motifs,
- * rules, rhythm, ornaments — works the same over either.
+ * How the degrees of a station sound and are written. Everything the taqsim does with degrees —
+ * motifs, rules, rhythm, ornaments — goes through it.
  */
 interface StationScale {
-    /** Pitch units in an octave: 24 quarter tones, or 53 komas. */
+    /** Pitch units in an octave: 24 quarter tones. */
     val perOctave: Int
 
-    /** Pitch of [degree] in units: a grid step (2 × MIDI), or a written pitch in komas. */
+    /** Pitch of [degree] in units: a grid step (2 × MIDI). */
     fun step(degree: Int): Int
 
     /** The note's name as the tab shows it. */
@@ -27,7 +26,7 @@ interface StationScale {
     /** The note as it is written on a staff. */
     fun staff(degree: Int): StaffNote
 
-    /** Frequency at A4 = 440 Hz (a Turkish oud in Bolâhenk). */
+    /** Frequency at A4 = 440 Hz. */
     fun hz(degree: Int): Double
 }
 
@@ -45,8 +44,8 @@ data class ArabicScale(val maqam: Maqam, val tonic: Int, val descending: Boolean
 /**
  * A station of the sayr: where the taqsim dwells for a while. Notes are counted in degrees of
  * the station's [scale]: 0 is its tonic, 7 its octave, −1 the degree under it. The [jins]
- * sitting on degree [jinsRoot] gives the motifs (for a Turkish station, the Arabic jins of the
- * same shape, named [jinsTitle]); phrases rest on [focus] and stay within [low]..[high].
+ * sitting on degree [jinsRoot] gives the motifs (named [jinsTitle]); phrases rest on [focus] and
+ * stay within [low]..[high].
  */
 data class Station(
     val name: String,
@@ -76,7 +75,7 @@ data class Station(
         require(jinsRoot in low - 1..high) { "$name: jins outside the range" }
     }
 
-    /** The Arabic maqam of the station, or null for a Turkish one. */
+    /** The maqam of the station, or null for an etude's own scale. */
     val maqam: Maqam? get() = (scale as? ArabicScale)?.maqam
 
     val tonic: Int get() = step(0)
@@ -208,7 +207,7 @@ data class Theme(val name: String, val shape: List<Int>, val rhythm: List<Double
 
 /** A whole taqsim: phrases in order, the form of its course, and the theme carried through it. */
 data class Taqsim(
-    /** The Arabic maqam, or null for a Turkish makam or an etude. */
+    /** The maqam, or null for an etude. */
     val maqam: Maqam?,
     val seed: Long,
     val phrases: List<TaqsimPhrase>,

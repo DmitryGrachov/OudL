@@ -61,12 +61,6 @@ import com.udl.oud.jins.JinsViewModel
 import com.udl.oud.taqsim.AnswerPhase
 import com.udl.oud.taqsim.JinsGrammars
 import com.udl.oud.taqsim.Motif
-import com.udl.oud.turkish.Perdes
-import com.udl.oud.turkish.TurkishGrammar
-import com.udl.oud.turkish.TurkishJinsCatalog
-import com.udl.oud.turkish.TurkishMakam
-import com.udl.oud.turkish.komaStepLabel
-import com.udl.oud.turkish.nameIn
 import com.udl.oud.ui.theme.InTuneGreen
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -75,10 +69,10 @@ import kotlin.math.roundToInt
 
 /**
  * The jins mode of the maqam tab: study one jins on its own. [onOpenMaqam] goes to a maqam that
- * uses it, [onOpenMakam] to a Turkish makam on a Turkish oud.
+ * uses it.
  */
 @Composable
-fun JinsRoute(onOpenMakam: (TurkishMakam) -> Unit, onOpenMaqam: (Maqam) -> Unit, vm: JinsViewModel = viewModel()) {
+fun JinsRoute(onOpenMaqam: (Maqam) -> Unit, vm: JinsViewModel = viewModel()) {
     val mic = rememberMicPermission()
     val state by vm.state.collectAsStateWithLifecycle()
     if (mic.granted && state.live) {
@@ -106,7 +100,7 @@ fun JinsRoute(onOpenMakam: (TurkishMakam) -> Unit, onOpenMaqam: (Maqam) -> Unit,
             EtudePanel(state, vm)
             JinsAnswerPanel(state, vm)
             MotifList(state, vm)
-            if (state.turkish) WhereItAppearsTurkish(state, onOpenMakam) else WhereItAppears(state, onOpenMaqam)
+            WhereItAppears(state, onOpenMaqam)
             Row(Modifier.fillMaxWidth().height(if (wide) 360.dp else 300.dp).padding(top = 8.dp)) {
                 JinsBoard(state, vm, Modifier.weight(1f).fillMaxHeight())
                 JinsStaff(state, Modifier.width(staffWidth).fillMaxHeight().padding(start = 8.dp))
@@ -116,22 +110,12 @@ fun JinsRoute(onOpenMakam: (TurkishMakam) -> Unit, onOpenMaqam: (Maqam) -> Unit,
     }
 }
 
-private fun JinsUiState.name(degree: Int) = if (turkish) station.nameIn(labels, ahenk, degree) else station.label(degree)
-/** A note of the etude, named in the chosen style on a Turkish oud. */
-private fun JinsUiState.noteName(station: com.udl.oud.taqsim.Station, n: com.udl.oud.taqsim.TaqsimNote) =
-    if (turkish) station.nameIn(labels, ahenk, n.degree) else n.name
+private fun JinsUiState.name(degree: Int) = station.label(degree)
+private fun JinsUiState.noteName(station: com.udl.oud.taqsim.Station, n: com.udl.oud.taqsim.TaqsimNote) = n.name
 private fun rootName(step: Int) = Spelling.of(step).label(NoteLabels.Solfege)
-private fun perdeName(written: Int) = Perdes.of(written) ?: written.toString()
-
-/** A step of the jins as written: tones and quarter tones on the Arabic oud, komas (T, B, S…) on the Turkish one. */
-private fun JinsUiState.stepLabel(step: Int) = if (turkish) "${komaStepLabel(step)} $step" else intervalLabel(step)
-
-/** The line about the jins: the Turkish jins' own on a Turkish oud. */
-private fun JinsUiState.about() = if (turkish) TurkishGrammar.about(tjins.name) else grammar.about
-
-/** A note the player played: on a Turkish oud the nearest degree, otherwise its quarter-tone name. */
-private fun JinsUiState.playedName(n: com.udl.oud.taqsim.HeardNote) =
-    if (turkish) name(station.degreeOfHz(n.hz / pitchScale).first) else Pitch(n.step).label(NoteLabels.Solfege)
+private fun JinsUiState.stepLabel(step: Int) = intervalLabel(step)
+private fun JinsUiState.about() = grammar.about
+private fun JinsUiState.playedName(n: com.udl.oud.taqsim.HeardNote) = Pitch(n.step).label(NoteLabels.Solfege)
 
 @Composable
 private fun JinsHeardBar(state: JinsUiState, vm: JinsViewModel, micGranted: Boolean) {
@@ -146,23 +130,6 @@ private fun JinsHeardBar(state: JinsUiState, vm: JinsViewModel, micGranted: Bool
                     style = MaterialTheme.typography.titleMedium,
                     color = muted,
                 )
-                state.turkish -> {
-                    // On a Turkish oud: the nearest perde of the jins' scale, and how far off.
-                    val (degree, cents) = state.heardDegree ?: return@Row
-                    val inTune = abs(cents) <= JinsUiState.IN_TUNE_CENTS
-                    val inJins = Math.floorMod(degree, 7) in state.degrees
-                    Text(
-                        state.name(degree),
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (inTune) InTuneGreen else MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        "  ${signedCents(cents)}" + if (!inJins) "  · рядом с джинсом" else "",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (inTune) InTuneGreen else MaterialTheme.colorScheme.tertiary,
-                    )
-                }
                 else -> {
                     val inTune = abs(heard.second) <= JinsUiState.IN_TUNE_CENTS
                     val degree = state.degreeOf(heard.first.step)
@@ -187,10 +154,6 @@ private fun JinsHeardBar(state: JinsUiState, vm: JinsViewModel, micGranted: Bool
 
 @Composable
 private fun JinsPicker(state: JinsUiState, vm: JinsViewModel) {
-    if (state.turkish) {
-        TurkishJinsPicker(state, vm)
-        return
-    }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Джинс", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
         JinsCatalog.ajnas.forEach { j ->
@@ -214,38 +177,6 @@ private fun JinsPicker(state: JinsUiState, vm: JinsViewModel) {
         TextButton(onClick = { vm.shiftRoot(-2) }) { Text("−½ тона") }
         TextButton(onClick = { vm.shiftRoot(2) }) { Text("+½ тона") }
     }
-}
-
-/** On a Turkish oud: dörtlü, beşli and üçlü, on the perdes the makams put them on. */
-@Composable
-private fun TurkishJinsPicker(state: JinsUiState, vm: JinsViewModel) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Джинс", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
-        TurkishJinsCatalog.ajnas.forEach { j ->
-            FilterChip(
-                j == state.tjins,
-                onClick = { vm.selectTurkish(j) },
-                label = { Text(j.name) },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-            )
-        }
-    }
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("На перде", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
-        TurkishJinsCatalog.roots(state.tjins).forEach { r ->
-            FilterChip(r == state.durak, onClick = { vm.setDurak(r) }, label = { Text(perdeName(r)) })
-        }
-        Text(
-            "ахенк ${state.ahenk.title}",
-            Modifier.align(Alignment.CenterVertically).padding(start = 8.dp),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-    TurkishLabelChips(state.labels)
 }
 
 /** Notes, intervals, colour, pillars and how the root is reached. */
@@ -351,21 +282,6 @@ private fun WhereItAppears(state: JinsUiState, onOpenMaqam: (Maqam) -> Unit) {
     }
 }
 
-/** Every Turkish makam that uses the jins, below on its durak or above; a tap opens the makam. */
-@Composable
-private fun WhereItAppearsTurkish(state: JinsUiState, onOpenMakam: (TurkishMakam) -> Unit) {
-    val list = TurkishJinsCatalog.appearances(state.tjins)
-    if (list.isEmpty()) return
-    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-        Text("Где встречается", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            list.forEach { a ->
-                val where = if (a.upper) "наверху" else "внизу, на дураке"
-                AssistChip(onClick = { onOpenMakam(a.makam) }, label = { Text("${a.makam.turkishName}: $where, ${perdeName(a.durak)}") })
-            }
-        }
-    }
-}
 
 @Composable
 private fun MotifDrillBar(state: JinsUiState, vm: JinsViewModel) {
@@ -409,7 +325,7 @@ private data class JinsDot(val course: Int, val cents: Double, val degree: Int, 
 
 /**
  * The neck with the jins: its notes bold, the colour note in its own colour, the notes around it
- * faint. Dots are placed by frequency, so quarter tones and komas sit where they are played.
+ * faint. Dots are placed by frequency, so quarter tones sit where they are played.
  */
 @Composable
 private fun JinsBoard(state: JinsUiState, vm: JinsViewModel, modifier: Modifier) {
@@ -488,12 +404,6 @@ private fun JinsStaff(state: JinsUiState, modifier: Modifier) {
     val hint = "записано октавой выше звука"
     if (degree != null) {
         NoteStaff(state.station.staff(degree), state.name(degree), color, hint = hint, octaveClef = true, modifier = modifier)
-        return
-    }
-    if (state.turkish) {
-        // A heard note, written as the nearest degree of the jins' scale.
-        val heard = state.heardDegree?.takeIf { abs(it.second) <= 40 }
-        NoteStaff(heard?.let { state.station.staff(it.first) }, heard?.let { state.name(it.first) }, color, hint = hint, octaveClef = true, modifier = modifier)
         return
     }
     val heard = state.heard?.takeIf { abs(it.second) <= 40 }

@@ -80,7 +80,6 @@ import com.udl.oud.fretboard.Position
 import com.udl.oud.fretboard.ScaleNote
 import com.udl.oud.fretboard.intervalLabel
 import com.udl.oud.tuner.Note
-import com.udl.oud.tuner.OudType
 import com.udl.oud.ui.theme.InTuneGreen
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -118,8 +117,6 @@ private fun BoardRoute(mode: BoardMode) {
         LaunchedEffect(Unit) { vm.select(mode.choices.first()) }
     }
     // The maqam tab can also show one jins at a time: the building blocks on their own.
-    val turkish = state.oud == OudType.Turkish
-    val turkishVm: com.udl.oud.turkish.TurkishMakamViewModel = viewModel()
     var jinsMode by rememberSaveable { mutableStateOf(false) }
     if (mode == BoardMode.Maqamat) {
         Column(Modifier.fillMaxSize()) {
@@ -129,15 +126,12 @@ private fun BoardRoute(mode: BoardMode) {
             }
             androidx.compose.foundation.layout.Box(Modifier.weight(1f)) {
                 if (jinsMode) {
-                    JinsRoute(onOpenMakam = { m ->
-                        turkishVm.select(m)
-                        jinsMode = false
-                    }, onOpenMaqam = { m ->
+                    JinsRoute(onOpenMaqam = { m ->
                         vm.select(m)
                         jinsMode = false
                     })
                 } else {
-                    if (turkish) TurkishMakamRoute(turkishVm) else MaqamBoard(vm, state, mode, mic)
+                    MaqamBoard(vm, state, mode, mic)
                 }
             }
         }
@@ -307,12 +301,10 @@ private fun Options(state: FretboardUiState, vm: FretboardViewModel, scaleMode: 
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
-        // Arabic names and quarter tones are Arabic theory; the Turkish oud doesn't get them.
-        val arabic = state.oud == OudType.Arabic
         listOfNotNull(
             NoteLabels.Solfege to "До-Ре-Ми",
             NoteLabels.Latin to "C-D-E",
-            (NoteLabels.Arabic to "Арабские").takeIf { arabic },
+            NoteLabels.Arabic to "Арабские",
         ).forEach { (labels, title) ->
             FilterChip(state.labels == labels, onClick = { vm.setLabels(labels) }, label = { Text(title) })
         }
@@ -320,7 +312,7 @@ private fun Options(state: FretboardUiState, vm: FretboardViewModel, scaleMode: 
         // A scale decides by itself which notes are shown, so the note layers only make sense without one.
         if (!scaleMode) {
             FilterChip(state.showAccidentals, onClick = vm::toggleAccidentals, label = { Text("♯ ♭") })
-            if (arabic) {
+            run {
                 FilterChip(state.showQuarterTones, onClick = vm::toggleQuarterTones, label = { Text("Четвертитоны") })
             }
         }
@@ -370,7 +362,7 @@ internal class BoardGeometry(
 
     fun x(cents: Int): Float = x(cents.toDouble())
 
-    /** Any pitch above the open string, not just the quarter-tone grid (Turkish komas need it). */
+    /** Any pitch above the open string, not just the quarter-tone grid. */
     fun x(cents: Double): Float = if (cents == 0.0) {
         nutX - openOffset
     } else {

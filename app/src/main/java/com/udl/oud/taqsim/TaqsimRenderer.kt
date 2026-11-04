@@ -23,7 +23,7 @@ object TaqsimRenderer {
         tuning: Tuning,
         ornaments: Map<Int, Ornament>,
         sampleRate: Int,
-        /** Frequency factor against A4 = 440: the A4 chosen and, on a Turkish oud, its ahenk. */
+        /** Frequency factor against A4 = 440: the A4 chosen. */
         pitchScale: Double = a4 / 440.0,
     ): RenderedTaqsim {
         val first = taqsim.phrases.take(phrases.first).sumOf { it.notes.size }

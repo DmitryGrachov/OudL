@@ -5,10 +5,9 @@ enum class Accidental { None, Flat, Sharp, HalfFlat, HalfSharp }
 
 /**
  * A note as written on a treble staff: [letter] (0 = C … 6 = B) in [octave], with its
- * [accidental]. Turkish notation writes koma-counted accidentals: [komas] is the number shown
- * with the ♭ or ♯ (1, 4, 5, 8…), null elsewhere.
+ * [accidental].
  */
-data class StaffNote(val letter: Int, val octave: Int, val accidental: Accidental, val komas: Int? = null) {
+data class StaffNote(val letter: Int, val octave: Int, val accidental: Accidental) {
     init {
         require(letter in 0..6)
     }

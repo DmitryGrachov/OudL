@@ -22,19 +22,4 @@ class TuningsTest {
 
     @Test fun nearestCourseFindsTheTopF() = assertEquals(5, faFa.nearestCourse(Note(65).frequency(a4) * 1.01, a4))
 
-    private fun courses(tuning: Tuning) = tuning.courses.joinToString(" ") { "${it.latin}${it.octave}" }
-
-    @Test fun eachOudHasItsOwnTunings() {
-        assertEquals(listOf("До-До", "Ре-До", "Фа-Фа"), Tunings.forOud(OudType.Arabic).map { it.name })
-        assertEquals(
-            listOf("C♯2 F♯2 B2 E3 A3 D4", "D2 F♯2 B2 E3 A3 D4"),
-            Tunings.forOud(OudType.Turkish).map(::courses),
-        )
-    }
-
-    @Test fun turkishBassCSharpHeardOctaveUpIsBroughtDown() {
-        val turkish = Tunings.turkish.first()
-        val cSharp3 = Note(49).frequency(a4)
-        assertEquals(cSharp3 / 2, turkish.resolveOctave(cSharp3, canBeOctaveLower = true, lockedCourse = null, a4 = a4), 1e-9)
-    }
 }

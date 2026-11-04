@@ -28,10 +28,8 @@ enum class TunerMode {
 }
 
 data class TunerUiState(
-    val oud: OudType = OudType.Arabic,
     val tuning: Tuning = Tunings.all.first(),
     val a4: Int = 440,
-    val ahenk: Ahenk = Ahenk.Bolahenk,
     val mode: TunerMode = TunerMode.Tuning,
     /** Course chosen by the user; null means the nearest course is picked automatically. */
     val lockedCourse: Int? = null,
@@ -79,10 +77,8 @@ data class TunerUiState(
 class TunerViewModel : ViewModel() {
     private val _state = MutableStateFlow(
         TunerUiState(
-            oud = OudSettings.oud.value,
             tuning = OudSettings.tuning.value,
             a4 = OudSettings.a4.value,
-            ahenk = OudSettings.ahenk.value,
         ),
     )
     val state = _state.asStateFlow()
@@ -102,11 +98,11 @@ class TunerViewModel : ViewModel() {
     init {
         // The shared settings are the source of truth; a new tuning starts the course check over.
         viewModelScope.launch {
-            combine(OudSettings.oud, OudSettings.tuning, OudSettings.a4, OudSettings.ahenk) { oud, tuning, a4, ahenk ->
-                TunerUiState(oud = oud, tuning = tuning, a4 = a4, ahenk = ahenk)
+            combine(OudSettings.tuning, OudSettings.a4) { tuning, a4 ->
+                TunerUiState(tuning = tuning, a4 = a4)
             }.collect { s ->
                 val tuningChanged = s.tuning != _state.value.tuning
-                _state.update { it.copy(oud = s.oud, tuning = s.tuning, a4 = s.a4, ahenk = s.ahenk) }
+                _state.update { it.copy(tuning = s.tuning, a4 = s.a4) }
                 if (tuningChanged) {
                     _state.update { it.copy(lockedCourse = if (it.mode == TunerMode.Course) 0 else null) }
                     restartCourse()
@@ -131,11 +127,7 @@ class TunerViewModel : ViewModel() {
         listenJob = null
     }
 
-    fun selectOud(oud: OudType) = OudSettings.setOud(oud)
-
     fun selectTuning(tuning: Tuning) = OudSettings.setTuning(tuning)
-
-    fun selectAhenk(ahenk: Ahenk) = OudSettings.setAhenk(ahenk)
 
     fun setAuto() = _state.update { it.copy(lockedCourse = null) }
 

@@ -50,12 +50,6 @@ data class Tuning(val name: String, val courses: List<Note>) {
     }
 }
 
-/** The two oud traditions the app knows: they differ in tunings and, later, in maqam theory. */
-enum class OudType(val title: String) {
-    Arabic("Арабский"),
-    Turkish("Турецкий"),
-}
-
 object Tunings {
     val arabic = listOf(
         Tuning("До-До", listOf(Note(36), Note(41), Note(45), Note(50), Note(55), Note(60))), // C2 F2 A2 D3 G3 C4
@@ -63,31 +57,5 @@ object Tunings {
         Tuning("Фа-Фа", listOf(Note(41), Note(45), Note(50), Note(55), Note(60), Note(65))), // F2 A2 D3 G3 C4 F4
     )
 
-    /** Sounding pitches of the usual Turkish tunings, not the transposed Turkish notation. */
-    val turkish = listOf(
-        Tuning("До♯-Ре", listOf(Note(37), Note(42), Note(47), Note(52), Note(57), Note(62))), // C♯2 F♯2 B2 E3 A3 D4
-        Tuning("Ре-Ре", listOf(Note(38), Note(42), Note(47), Note(52), Note(57), Note(62))), // D2 F♯2 B2 E3 A3 D4
-    )
-
-    val all = arabic + turkish
-
-    /** Tunings of [oud] as they sound; a Turkish oud is tuned down to its [ahenk]. */
-    fun forOud(oud: OudType, ahenk: Ahenk = Ahenk.Bolahenk): List<Tuning> = when (oud) {
-        OudType.Arabic -> arabic
-        OudType.Turkish -> turkish.map { it.transposed(ahenk.semitones) }
-    }
-}
-
-/**
- * Ahenk: the pitch level Turkish notation is played at, named after the ney sizes. Notation stays
- * the same; the whole instrument sounds lower than in Bolahenk. Shifts follow the âhenk ladder
- * (which perde of each ahenk sounds Mansur's dügâh), taken downwards from Bolahenk, as far as an
- * oud can be tuned down. [komas] and [letters] spell the shift, [semitones] retunes the oud.
- */
-enum class Ahenk(val title: String, val semitones: Int, val komas: Int, val letters: Int, val shift: String) {
-    Bolahenk("Bolâhenk", 0, 0, 0, "основной"),
-    Supurde("Süpürde", -2, -9, -1, "на тон ниже"),
-    Mustahsen("Müstahsen", -3, -13, -2, "на малую терцию ниже"),
-    Kiz("Kız", -5, -22, -3, "на кварту ниже"),
-    Mansur("Mansur", -7, -31, -4, "на квинту ниже"),
+    val all = arabic
 }

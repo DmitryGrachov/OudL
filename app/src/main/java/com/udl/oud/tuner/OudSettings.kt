@@ -5,62 +5,31 @@ import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import com.udl.oud.turkish.TurkishLabels
 
 /**
- * Instrument settings shared by every screen and kept between launches: which oud, its tuning,
- * the A4 reference and the Turkish ahenk. Screens read the flows; changes go through the setters,
- * which save.
+ * Instrument settings shared by every screen and kept between launches: the tuning and the A4
+ * reference. Screens read the flows; changes go through the setters, which save.
  */
 object OudSettings {
     private const val PREFS = "oud_settings"
-    private const val KEY_OUD = "oud"
     private const val KEY_TUNING = "tuning"
     private const val KEY_A4 = "a4"
-    private const val KEY_AHENK = "ahenk"
-    private const val KEY_TURKISH_LABELS = "turkish_labels"
     private const val DEFAULT_A4 = 440
 
     private var prefs: SharedPreferences? = null
 
-    private val _oud = MutableStateFlow(OudType.Arabic)
     private val _tuning = MutableStateFlow(Tunings.arabic.first())
     private val _a4 = MutableStateFlow(DEFAULT_A4)
-    private val _ahenk = MutableStateFlow(Ahenk.Bolahenk)
-    private val _turkishLabels = MutableStateFlow(TurkishLabels.Perde)
 
-    val oud: StateFlow<OudType> = _oud.asStateFlow()
-
-    /** The tuning as it sounds: on a Turkish oud, already moved to the [ahenk]. */
     val tuning: StateFlow<Tuning> = _tuning.asStateFlow()
     val a4: StateFlow<Int> = _a4.asStateFlow()
-    val ahenk: StateFlow<Ahenk> = _ahenk.asStateFlow()
-
-    /** How Turkish notes are named on every screen: by perde, as written, or as they sound. */
-    val turkishLabels: StateFlow<TurkishLabels> = _turkishLabels.asStateFlow()
 
     /** Loads what was saved last time; call once at start-up, before any screen reads. */
     fun init(context: Context) {
         val p = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs = p
-        val oud = p.getString(KEY_OUD, null)?.let { name -> OudType.entries.firstOrNull { it.name == name } }
-            ?: OudType.Arabic
-        _oud.value = oud
-        _ahenk.value = p.getString(KEY_AHENK, null)?.let { name -> Ahenk.entries.firstOrNull { it.name == name } }
-            ?: Ahenk.Bolahenk
-        val tunings = Tunings.forOud(oud, _ahenk.value)
-        _tuning.value = tunings.firstOrNull { it.name == p.getString(KEY_TUNING, null) } ?: tunings.first()
+        _tuning.value = Tunings.arabic.firstOrNull { it.name == p.getString(KEY_TUNING, null) } ?: Tunings.arabic.first()
         _a4.value = p.getInt(KEY_A4, DEFAULT_A4)
-        _turkishLabels.value = p.getString(KEY_TURKISH_LABELS, null)?.let { name -> TurkishLabels.entries.firstOrNull { it.name == name } }
-            ?: TurkishLabels.Perde
-    }
-
-    /** Switching the oud also switches to its first tuning. */
-    fun setOud(oud: OudType) {
-        if (oud == _oud.value) return
-        _oud.value = oud
-        _tuning.value = Tunings.forOud(oud, _ahenk.value).first()
-        save()
     }
 
     fun setTuning(tuning: Tuning) {
@@ -73,27 +42,10 @@ object OudSettings {
         save()
     }
 
-    /** A new ahenk retunes the same Turkish tuning to its level. */
-    fun setAhenk(ahenk: Ahenk) {
-        if (ahenk == _ahenk.value) return
-        _ahenk.value = ahenk
-        val tunings = Tunings.forOud(_oud.value, ahenk)
-        _tuning.value = tunings.firstOrNull { it.name == _tuning.value.name } ?: tunings.first()
-        save()
-    }
-
-    fun setTurkishLabels(labels: TurkishLabels) {
-        _turkishLabels.value = labels
-        save()
-    }
-
     private fun save() {
         prefs?.edit()
-            ?.putString(KEY_OUD, _oud.value.name)
             ?.putString(KEY_TUNING, _tuning.value.name)
             ?.putInt(KEY_A4, _a4.value)
-            ?.putString(KEY_AHENK, _ahenk.value.name)
-            ?.putString(KEY_TURKISH_LABELS, _turkishLabels.value.name)
             ?.apply()
     }
 }

@@ -11,9 +11,6 @@ import com.udl.oud.taqsim.Taqsim
 import com.udl.oud.taqsim.TaqsimForm
 import com.udl.oud.taqsim.TaqsimGenerator
 import com.udl.oud.taqsim.TaqsimSayrs
-import com.udl.oud.turkish.TurkishGrammar
-import com.udl.oud.turkish.TurkishJins
-import com.udl.oud.turkish.TurkishJinsCatalog
 import kotlin.random.Random
 
 /**
@@ -58,14 +55,5 @@ object JinsEtude {
     fun generate(jins: Jins, root: Int, seed: Long): Taqsim {
         val generator = TaqsimGenerator(seed)
         return generator.generateFrom(JinsCatalog.host(jins), plan(jins, root, Random(seed xor 0x5DEECE66DL)), detailed = false)
-    }
-
-    /** The same etude in a Turkish jins on a perde, with its koma pitches; motifs move like its Arabic analog. */
-    fun generateTurkish(jins: TurkishJins, durak: Int, seed: Long): Taqsim {
-        val size = jins.intervals.size
-        val s = TurkishJinsCatalog.station(jins, durak, low = -2, high = size + 1)
-        val analog = TurkishGrammar.analog(jins)
-        val plan = planOn(s, questionRest(analog, size), Random(seed xor 0x5DEECE66DL))
-        return TaqsimGenerator(seed).generateFrom(plan, analog, jins.name, null, detailed = false)
     }
 }

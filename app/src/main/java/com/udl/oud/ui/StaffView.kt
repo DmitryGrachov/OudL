@@ -131,11 +131,6 @@ internal fun DrawScope.drawAccidental(note: StaffNote, at: Offset, h: Float, col
             val y = topLeft.y + g.size.height * 0.42f
             drawLine(color, Offset(stemX - h * 1.0f, y + h * 0.55f), Offset(stemX + h * 1.0f, y - h * 0.55f), stroke * 1.8f)
         }
-        // Turkish notation counts the komas the sign is worth.
-        note.komas?.let { k ->
-            val n = measurer.measure(k.toString(), TextStyle(fontSize = (h * 1.6f).toSp(), color = color, fontWeight = FontWeight.Bold))
-            drawText(n, topLeft = Offset(at.x + g.size.width / 2f - n.size.width / 3f, topLeft.y))
-        }
     }
     when (note.accidental) {
         Accidental.None -> Unit

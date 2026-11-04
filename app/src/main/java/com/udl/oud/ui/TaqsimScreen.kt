@@ -69,13 +69,6 @@ import com.udl.oud.taqsim.TaqsimNote
 import com.udl.oud.taqsim.TaqsimTempo
 import com.udl.oud.taqsim.TaqsimUiState
 import com.udl.oud.taqsim.TaqsimViewModel
-import com.udl.oud.turkish.TurkishGrammar
-import com.udl.oud.turkish.TurkishMakams
-import com.udl.oud.turkish.TurkishSayrStations
-import com.udl.oud.turkish.TurkishSeyirs
-import com.udl.oud.turkish.TurkishLabels
-import com.udl.oud.turkish.nameIn
-import com.udl.oud.tuner.OudSettings
 import com.udl.oud.ui.theme.InTuneGreen
 import kotlin.math.abs
 import kotlin.math.log2
@@ -107,7 +100,7 @@ fun TaqsimRoute(vm: TaqsimViewModel = viewModel()) {
                 if (state.exercise != null) RepeatBar(state, vm) else TaqsimHeardBar(state, vm, mic.granted)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Режим", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
-                    TaqsimMode.entries.filter { !(state.turkish && it == TaqsimMode.Free) }.forEach { m ->
+                    TaqsimMode.entries.forEach { m ->
                         FilterChip(state.mode == m, onClick = { vm.setMode(m) }, label = { Text(m.title) })
                     }
                 }
@@ -130,16 +123,9 @@ fun TaqsimRoute(vm: TaqsimViewModel = viewModel()) {
     }
 }
 
-/** A note of the taqsim by name; on a Turkish oud in the chosen style (perde, written, sounding). */
-private fun TaqsimUiState.noteName(n: TaqsimNote): String {
-    if (!turkish) return n.name
-    val station = taqsim.phrases.firstOrNull { p -> p.notes.any { it === n } }?.station ?: return n.name
-    return station.nameIn(labels, ahenk, n.degree)
-}
+private fun TaqsimUiState.noteName(n: TaqsimNote): String = n.name
 
-/** A degree of a station by name, in the chosen style on a Turkish oud. */
-private fun TaqsimUiState.degreeName(station: Station, degree: Int): String =
-    if (turkish) station.nameIn(labels, ahenk, degree) else station.label(degree)
+private fun TaqsimUiState.degreeName(station: Station, degree: Int): String = station.label(degree)
 
 @Composable
 private fun TaqsimHeardBar(state: TaqsimUiState, vm: TaqsimViewModel, micGranted: Boolean) {
@@ -160,12 +146,10 @@ private fun TaqsimHeardBar(state: TaqsimUiState, vm: TaqsimViewModel, micGranted
                     color = muted,
                 )
                 else -> {
-                    // On a Turkish oud the heard note is named as the nearest perde of the makam.
-                    val turkish = state.heardDegree.takeIf { state.turkish }
-                    val cents = turkish?.second ?: heard.second
+                    val cents = heard.second
                     val inTune = abs(cents) <= TaqsimUiState.IN_TUNE_CENTS
                     Text(
-                        turkish?.let { state.degreeName(state.taqsim.phrases[state.shownPhrase].station, it.first) } ?: heard.first.label(NoteLabels.Solfege),
+                        heard.first.label(NoteLabels.Solfege),
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                         color = if (inTune) InTuneGreen else MaterialTheme.colorScheme.onSurface,
@@ -181,10 +165,6 @@ private fun TaqsimHeardBar(state: TaqsimUiState, vm: TaqsimViewModel, micGranted
 
 @Composable
 private fun MaqamPicker(state: TaqsimUiState, vm: TaqsimViewModel) {
-    if (state.turkish) {
-        TurkishMakamPicker(state, vm)
-        return
-    }
     val family = Maqamat.families.first { state.maqam in it.scales }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Семейство", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
@@ -214,59 +194,11 @@ private fun MaqamPicker(state: TaqsimUiState, vm: TaqsimViewModel) {
     }
 }
 
-/** On a Turkish oud: makams by durak, and the seyir's direction. */
-@Composable
-private fun TurkishMakamPicker(state: TaqsimUiState, vm: TaqsimViewModel) {
-    val family = TurkishMakams.families.first { state.makam in it.makams }
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Дурак", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
-        TurkishMakams.families.forEach { f ->
-            FilterChip(f == family, onClick = { if (f != family) vm.selectMakam(f.makams.first()) }, label = { Text(f.name) })
-        }
-    }
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Макам", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
-        family.makams.forEach { m ->
-            FilterChip(
-                m == state.makam,
-                onClick = { vm.selectMakam(m) },
-                label = { Text("${m.name} · ${m.turkishName}") },
-                colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = MaterialTheme.colorScheme.primary,
-                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-            )
-        }
-        val seyir = TurkishSeyirs.of(state.makam)
-        Text(
-            "сейир ${seyir.direction.turkish} · ахенк ${state.ahenk.title}",
-            Modifier.align(Alignment.CenterVertically).padding(start = 8.dp),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-    TurkishLabelChips(state.labels)
-}
+/** A note the player played, named on the quarter-tone grid. */
+private fun heardName(state: TaqsimUiState, station: Station, n: com.udl.oud.taqsim.HeardNote): String = Pitch(n.step).label(NoteLabels.Solfege)
 
-/** Perde / written / sounding: how Turkish notes are named, the same on every tab. */
-@Composable
-internal fun TurkishLabelChips(current: TurkishLabels) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Ноты", Modifier.align(Alignment.CenterVertically), style = MaterialTheme.typography.labelLarge)
-        TurkishLabels.entries.forEach { l ->
-            FilterChip(current == l, onClick = { OudSettings.setTurkishLabels(l) }, label = { Text(l.title) })
-        }
-    }
-}
-
-/** A note the player played, named on the maqam's grid or, on a Turkish oud, as the nearest degree. */
-private fun heardName(state: TaqsimUiState, station: Station, n: com.udl.oud.taqsim.HeardNote): String =
-    if (state.turkish) state.degreeName(station, station.degreeOfHz(n.hz / state.pitchScale).first)
-    else Pitch(n.step).label(NoteLabels.Solfege)
-
-/** The line about a station's jins, in its own tradition. */
-private fun aboutOf(state: TaqsimUiState, station: Station): String =
-    if (state.turkish) TurkishGrammar.about(station.jinsTitle) else JinsGrammars.of(station.jins).about
+/** The line about a station's jins. */
+private fun aboutOf(state: TaqsimUiState, station: Station): String = JinsGrammars.of(station.jins).about
 
 @Composable
 private fun TaqsimControls(state: TaqsimUiState, vm: TaqsimViewModel) {
@@ -433,8 +365,8 @@ private fun RepeatBar(state: TaqsimUiState, vm: TaqsimViewModel) {
 private data class BoardDot(val course: Int, val cents: Double, val degree: Int, val hz: Double)
 
 /**
- * The neck with the station's scale, placed by frequency so Arabic quarter tones and Turkish
- * komas sit where they are played; the note sounding, asked for or heard is lit.
+ * The neck with the station's scale, placed by frequency so quarter tones sit where they are
+ * played; the note sounding, asked for or heard is lit.
  */
 @Composable
 private fun TaqsimBoard(state: TaqsimUiState, modifier: Modifier) {
@@ -443,7 +375,6 @@ private fun TaqsimBoard(state: TaqsimUiState, modifier: Modifier) {
     // In free mode the board shows the maqam itself from its tonic; otherwise the phrase's station.
     val station: Station = when {
         state.mode != TaqsimMode.Free -> state.taqsim.phrases[state.shownPhrase].station
-        state.turkish -> TurkishSayrStations(state.makam).qafla
         else -> com.udl.oud.taqsim.TaqsimSayrs.Stations(state.maqam, state.maqam.tonic).qafla
     }
     val a4 = state.a4.toDouble()
@@ -495,14 +426,8 @@ private fun TaqsimBoard(state: TaqsimUiState, modifier: Modifier) {
 private fun TaqsimStaff(state: TaqsimUiState, modifier: Modifier) {
     val tone = state.playingTone ?: state.target
     val heard = state.heard?.takeIf { tone == null && abs(it.second) <= 40 }
-    // On a Turkish oud the heard note is written as the makam's nearest degree.
-    val station = state.taqsim.phrases.getOrNull(state.shownPhrase)?.station
-    val heardDegree = if (state.turkish && heard != null && station != null) state.heardDegree?.first else null
-    val note = tone?.let { it.staff }
-        ?: heardDegree?.let { station!!.staff(it) }
-        ?: heard?.let { StaffNote.arabic(it.first.step) }
-    val name = tone?.let(state::noteName)
-        ?: heardDegree?.let { state.degreeName(station!!, it) }
+    val note = tone?.let { it.staff } ?: heard?.let { StaffNote.arabic(it.first.step) }
+    val name = tone?.let(state::noteName) ?: heard?.first?.label(NoteLabels.Solfege)
         ?: heard?.first?.label(NoteLabels.Solfege)
     val color: Color = when {
         tone != null -> MaterialTheme.colorScheme.primary

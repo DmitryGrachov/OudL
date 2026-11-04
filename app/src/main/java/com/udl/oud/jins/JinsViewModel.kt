@@ -42,25 +42,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.udl.oud.tuner.Ahenk
-import com.udl.oud.turkish.TurkishLabels
-import com.udl.oud.turkish.nameIn
-import com.udl.oud.tuner.OudType
-import com.udl.oud.turkish.TurkishJins
-import com.udl.oud.turkish.TurkishJinsCatalog
 import kotlin.math.abs
-import kotlin.math.pow
 
 data class JinsUiState(
     val jins: Jins = JinsCatalog.ajnas.first(),
     val root: Int = JinsCatalog.defaultRoot(JinsCatalog.ajnas.first()),
-    /** On a Turkish oud: a Turkish jins on a perde (written komas), heard in the ahenk. */
-    val turkish: Boolean = OudSettings.oud.value == OudType.Turkish,
-    val tjins: TurkishJins = TurkishJinsCatalog.ajnas.first(),
-    val durak: Int = TurkishJinsCatalog.defaultRoot(TurkishJinsCatalog.ajnas.first()),
-    val ahenk: Ahenk = OudSettings.ahenk.value,
-    /** How Turkish notes are named: perde, as written, or as they sound. */
-    val labels: TurkishLabels = OudSettings.turkishLabels.value,
     val tuning: Tuning = OudSettings.tuning.value,
     val a4: Int = OudSettings.a4.value,
     /** Degree sounding now (with its octave), to light it up. */
@@ -79,15 +65,15 @@ data class JinsUiState(
     val verdict: AnswerVerdict? = null,
     val error: String? = null,
 ) {
-    val station: Station get() = if (turkish) TurkishJinsCatalog.station(tjins, durak) else JinsCatalog.station(jins, root)
+    val station: Station get() = JinsCatalog.station(jins, root)
 
-    val title: String get() = if (turkish) tjins.name else jins.name
+    val title: String get() = jins.name
 
-    /** Steps of the jins: quarter tones on the Arabic oud, komas on the Turkish one. */
-    val intervals: List<Int> get() = if (turkish) tjins.intervals else jins.intervals
+    /** Steps of the jins, in quarter tones. */
+    val intervals: List<Int> get() = jins.intervals
 
-    /** From the station's pitches at A4 = 440 to what sounds: the A4 chosen and, on a Turkish oud, the ahenk. */
-    val pitchScale: Double get() = a4 / 440.0 * if (turkish) 2.0.pow(ahenk.semitones / 12.0) else 1.0
+    /** From the station's pitches at A4 = 440 to the A4 chosen. */
+    val pitchScale: Double get() = a4 / 440.0
 
     /** The frequency a degree sounds at. */
     fun hz(degree: Int): Double = station.hz(degree) * pitchScale
@@ -142,11 +128,8 @@ class JinsViewModel : ViewModel() {
 
     init {
         viewModelScope.launch {
-            combine(OudSettings.tuning, OudSettings.a4, OudSettings.oud, OudSettings.ahenk, OudSettings.turkishLabels) { t, a, o, h, l -> listOf(t, a, o, h, l) }.collect { v ->
-                val turkish = v[2] == OudType.Turkish
-                val switched = turkish != _state.value.turkish
-                _state.update { it.copy(tuning = v[0] as Tuning, a4 = v[1] as Int, turkish = turkish, ahenk = v[3] as Ahenk, labels = v[4] as TurkishLabels) }
-                if (switched || (turkish && _state.value.etude.title != _state.value.tjins.name)) newEtude()
+            combine(OudSettings.tuning, OudSettings.a4, ::Pair).collect { (tuning, a4) ->
+                _state.update { it.copy(tuning = tuning, a4 = a4) }
             }
         }
     }
@@ -179,17 +162,6 @@ class JinsViewModel : ViewModel() {
         newEtude()
     }
 
-    /** On a Turkish oud: a Turkish jins, on the perde it is first found on. */
-    fun selectTurkish(jins: TurkishJins) {
-        _state.update { it.copy(tjins = jins, durak = TurkishJinsCatalog.defaultRoot(jins), exercise = null, drillMotif = null) }
-        newEtude()
-    }
-
-    fun setDurak(written: Int) {
-        _state.update { it.copy(durak = written, exercise = null, drillMotif = null) }
-        newEtude()
-    }
-
     fun setRoot(step: Int) {
         _state.update { it.copy(root = step, exercise = null, drillMotif = null) }
         newEtude()
@@ -209,7 +181,7 @@ class JinsViewModel : ViewModel() {
         val s = _state.value
         _state.update {
             val seed = System.nanoTime()
-            val etude = if (s.turkish) JinsEtude.generateTurkish(s.tjins, s.durak, seed) else JinsEtude.generate(s.jins, s.root, seed)
+            val etude = JinsEtude.generate(s.jins, s.root, seed)
             it.copy(etude = etude, phase = AnswerPhase.Idle, verdict = null, answerNotes = emptyList())
         }
     }
@@ -238,7 +210,7 @@ class JinsViewModel : ViewModel() {
         val answer = s.etude.phrases.getOrNull(s.answer) ?: return
         val notes = collector?.finish().orEmpty()
         collector = null
-        _state.update { it.copy(phase = AnswerPhase.Done, answerNotes = notes, verdict = AnswerCheck.evaluate(notes, answer.station, answer.notes.last().degree, s.pitchScale) { answer.station.nameIn(s.labels, s.ahenk, it) }) }
+        _state.update { it.copy(phase = AnswerPhase.Done, answerNotes = notes, verdict = AnswerCheck.evaluate(notes, answer.station, answer.notes.last().degree)) }
     }
 
     private var collector: NoteCollector? = null

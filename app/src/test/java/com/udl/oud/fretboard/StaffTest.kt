@@ -1,7 +1,5 @@
 package com.udl.oud.fretboard
 
-import com.udl.oud.turkish.TurkishMakams
-import com.udl.oud.turkish.TurkishScale
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -31,11 +29,4 @@ class StaffTest {
 
     @Test fun highNotesGetLedgerLinesAbove() =
         assertEquals(listOf(10, 12, 14), StaffNote(2, 6, Accidental.None).ledgerLines) // E6 sits on the third
-
-    @Test fun turkishNotationKeepsWrittenPitchAndKomaCount() {
-        val rast = TurkishMakams.all.first { it.turkishName == "Rast" }
-        assertEquals(StaffNote(4, 4, Accidental.None), TurkishScale.tone(rast, 0).staffNote()) // G4 on the G line
-        assertEquals(StaffNote(6, 4, Accidental.Flat, komas = 1), TurkishScale.tone(rast, 2).staffNote()) // Segâh B♭¹
-        assertEquals(StaffNote(3, 5, Accidental.Sharp, komas = 4), TurkishScale.tone(rast, 6).staffNote()) // Eviç F♯⁴
-    }
 }

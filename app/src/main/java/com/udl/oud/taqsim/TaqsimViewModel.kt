@@ -15,15 +15,7 @@ import com.udl.oud.fretboard.Maqam
 import com.udl.oud.fretboard.Maqamat
 import com.udl.oud.fretboard.Pitch
 import com.udl.oud.fretboard.SteadyNote
-import com.udl.oud.tuner.Ahenk
-import com.udl.oud.turkish.TurkishLabels
-import com.udl.oud.turkish.nameIn
 import com.udl.oud.tuner.OudSettings
-import com.udl.oud.tuner.OudType
-import com.udl.oud.turkish.TurkishMakam
-import com.udl.oud.turkish.TurkishMakams
-import com.udl.oud.turkish.TurkishTaqsim
-import kotlin.math.pow
 import com.udl.oud.tuner.Tuning
 import com.udl.oud.tuner.centsBetween
 import kotlinx.coroutines.Dispatchers
@@ -78,12 +70,6 @@ data class TaqsimUiState(
     val freeReview: FreeReview? = null,
     val freeInChosen: Boolean = true,
     val maqam: Maqam = Maqamat.all.first(),
-    /** On a Turkish oud: the Turkish makam the taqsim is in, and the ahenk it sounds in. */
-    val turkish: Boolean = OudSettings.oud.value == OudType.Turkish,
-    val makam: TurkishMakam = TurkishMakams.all.first(),
-    val ahenk: Ahenk = OudSettings.ahenk.value,
-    /** How Turkish notes are named: perde, as written, or as they sound. */
-    val labels: TurkishLabels = OudSettings.turkishLabels.value,
     val length: TaqsimLength = TaqsimLength.Medium,
     val tempo: TaqsimTempo = TaqsimTempo.Normal,
     val ornamentLevel: OrnamentLevel = OrnamentLevel.Light,
@@ -134,15 +120,11 @@ data class TaqsimUiState(
             return centsBetween(f, t.hz * pitchScale)
         }
 
-    /** Frequency factor against A4 = 440: the A4 chosen and, on a Turkish oud, the ahenk. */
-    val pitchScale: Double get() = a4 / 440.0 * if (turkish) 2.0.pow(ahenk.semitones / 12.0) else 1.0
+    /** Frequency factor against A4 = 440. */
+    val pitchScale: Double get() = a4 / 440.0
 
     /** What the taqsim is in, for titles. */
-    val title: String get() = if (turkish) makam.turkishName else maqam.name
-
-    /** The heard note as a degree of the shown station, with its name and how far off (any system). */
-    val heardDegree: Pair<Int, Double>?
-        get() = frequency?.let { taqsim.phrases.getOrNull(shownPhrase)?.station?.degreeOfHz(it / pitchScale) }
+    val title: String get() = maqam.name
 
     /** The heard note on the quarter-tone grid and how far off it is. */
     val heard: Pair<Pitch, Double>?
@@ -173,12 +155,8 @@ class TaqsimViewModel : ViewModel() {
 
     init {
         viewModelScope.launch {
-            combine(OudSettings.tuning, OudSettings.a4, OudSettings.oud, OudSettings.ahenk, OudSettings.turkishLabels) { t, a, o, h, l -> listOf(t, a, o, h, l) }.collect { v ->
-                val turkish = v[2] == OudType.Turkish
-                val switched = turkish != _state.value.turkish
-                _state.update { it.copy(tuning = v[0] as Tuning, a4 = v[1] as Int, turkish = turkish, ahenk = v[3] as Ahenk, labels = v[4] as TurkishLabels) }
-                // Another oud: a taqsim in its own tradition.
-                if (switched) regenerate()
+            combine(OudSettings.tuning, OudSettings.a4, ::Pair).collect { (tuning, a4) ->
+                _state.update { it.copy(tuning = tuning, a4 = a4) }
             }
         }
         regenerate()
@@ -212,14 +190,9 @@ class TaqsimViewModel : ViewModel() {
         regenerate()
     }
 
-    fun selectMakam(makam: TurkishMakam) {
-        _state.update { it.copy(makam = makam) }
-        regenerate()
-    }
-
-    /** A taqsim in the tradition of the oud chosen: an Arabic maqam, or a Turkish makam. */
+    /** A new taqsim in the chosen maqam. */
     private fun makeTaqsim(s: TaqsimUiState, seed: Long, length: TaqsimLength): Taqsim =
-        if (s.turkish) TurkishTaqsim.generate(s.makam, length, seed) else TaqsimGenerator(seed).generate(s.maqam, length)
+        TaqsimGenerator(seed).generate(s.maqam, length)
 
     fun setLength(length: TaqsimLength) {
         _state.update { it.copy(length = length) }
@@ -365,7 +338,7 @@ class TaqsimViewModel : ViewModel() {
         collector = null
         val station = s.taqsim.phrases[a].station
         val target = s.taqsim.phrases[a].notes.last().degree
-        _state.update { it.copy(phase = AnswerPhase.Done, answerNotes = notes, verdict = AnswerCheck.evaluate(notes, station, target, s.pitchScale) { station.nameIn(s.labels, s.ahenk, it) }) }
+        _state.update { it.copy(phase = AnswerPhase.Done, answerNotes = notes, verdict = AnswerCheck.evaluate(notes, station, target)) }
     }
 
     private var collector: NoteCollector? = null
