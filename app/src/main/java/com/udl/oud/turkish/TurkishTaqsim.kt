@@ -18,10 +18,10 @@ import kotlin.random.Random
  * A Turkish makam's degrees as a station scale: written pitches in komas, named by perde, with
  * koma-counted accidentals; going down, the inici degrees; under the durak, the yeden.
  */
-data class TurkishStationScale(val makam: TurkishMakam, val descending: Boolean = false) : StationScale {
+data class TurkishStationScale(val makam: TurkishMakam, val descending: Boolean = false) : StationScale, TurkishTones {
     override val perOctave: Int get() = Koma.PER_OCTAVE
 
-    fun tone(degree: Int): TurkishTone =
+    override fun tone(degree: Int): TurkishTone =
         if (degree == -1) TurkishScale.yeden(makam)
         else TurkishScale.tone(makam, Math.floorMod(degree, 7), Math.floorDiv(degree, 7), descending)
 

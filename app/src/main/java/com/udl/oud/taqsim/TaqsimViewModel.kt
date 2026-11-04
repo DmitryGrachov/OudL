@@ -16,6 +16,8 @@ import com.udl.oud.fretboard.Maqamat
 import com.udl.oud.fretboard.Pitch
 import com.udl.oud.fretboard.SteadyNote
 import com.udl.oud.tuner.Ahenk
+import com.udl.oud.turkish.TurkishLabels
+import com.udl.oud.turkish.nameIn
 import com.udl.oud.tuner.OudSettings
 import com.udl.oud.tuner.OudType
 import com.udl.oud.turkish.TurkishMakam
@@ -80,6 +82,8 @@ data class TaqsimUiState(
     val turkish: Boolean = OudSettings.oud.value == OudType.Turkish,
     val makam: TurkishMakam = TurkishMakams.all.first(),
     val ahenk: Ahenk = OudSettings.ahenk.value,
+    /** How Turkish notes are named: perde, as written, or as they sound. */
+    val labels: TurkishLabels = OudSettings.turkishLabels.value,
     val length: TaqsimLength = TaqsimLength.Medium,
     val tempo: TaqsimTempo = TaqsimTempo.Normal,
     val ornamentLevel: OrnamentLevel = OrnamentLevel.Light,
@@ -169,10 +173,10 @@ class TaqsimViewModel : ViewModel() {
 
     init {
         viewModelScope.launch {
-            combine(OudSettings.tuning, OudSettings.a4, OudSettings.oud, OudSettings.ahenk) { t, a, o, h -> listOf(t, a, o, h) }.collect { v ->
+            combine(OudSettings.tuning, OudSettings.a4, OudSettings.oud, OudSettings.ahenk, OudSettings.turkishLabels) { t, a, o, h, l -> listOf(t, a, o, h, l) }.collect { v ->
                 val turkish = v[2] == OudType.Turkish
                 val switched = turkish != _state.value.turkish
-                _state.update { it.copy(tuning = v[0] as Tuning, a4 = v[1] as Int, turkish = turkish, ahenk = v[3] as Ahenk) }
+                _state.update { it.copy(tuning = v[0] as Tuning, a4 = v[1] as Int, turkish = turkish, ahenk = v[3] as Ahenk, labels = v[4] as TurkishLabels) }
                 // Another oud: a taqsim in its own tradition.
                 if (switched) regenerate()
             }
@@ -361,7 +365,7 @@ class TaqsimViewModel : ViewModel() {
         collector = null
         val station = s.taqsim.phrases[a].station
         val target = s.taqsim.phrases[a].notes.last().degree
-        _state.update { it.copy(phase = AnswerPhase.Done, answerNotes = notes, verdict = AnswerCheck.evaluate(notes, station, target, s.pitchScale)) }
+        _state.update { it.copy(phase = AnswerPhase.Done, answerNotes = notes, verdict = AnswerCheck.evaluate(notes, station, target, s.pitchScale) { station.nameIn(s.labels, s.ahenk, it) }) }
     }
 
     private var collector: NoteCollector? = null

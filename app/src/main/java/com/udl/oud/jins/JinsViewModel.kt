@@ -43,6 +43,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.udl.oud.tuner.Ahenk
+import com.udl.oud.turkish.TurkishLabels
+import com.udl.oud.turkish.nameIn
 import com.udl.oud.tuner.OudType
 import com.udl.oud.turkish.TurkishJins
 import com.udl.oud.turkish.TurkishJinsCatalog
@@ -57,6 +59,8 @@ data class JinsUiState(
     val tjins: TurkishJins = TurkishJinsCatalog.ajnas.first(),
     val durak: Int = TurkishJinsCatalog.defaultRoot(TurkishJinsCatalog.ajnas.first()),
     val ahenk: Ahenk = OudSettings.ahenk.value,
+    /** How Turkish notes are named: perde, as written, or as they sound. */
+    val labels: TurkishLabels = OudSettings.turkishLabels.value,
     val tuning: Tuning = OudSettings.tuning.value,
     val a4: Int = OudSettings.a4.value,
     /** Degree sounding now (with its octave), to light it up. */
@@ -138,10 +142,10 @@ class JinsViewModel : ViewModel() {
 
     init {
         viewModelScope.launch {
-            combine(OudSettings.tuning, OudSettings.a4, OudSettings.oud, OudSettings.ahenk) { t, a, o, h -> listOf(t, a, o, h) }.collect { v ->
+            combine(OudSettings.tuning, OudSettings.a4, OudSettings.oud, OudSettings.ahenk, OudSettings.turkishLabels) { t, a, o, h, l -> listOf(t, a, o, h, l) }.collect { v ->
                 val turkish = v[2] == OudType.Turkish
                 val switched = turkish != _state.value.turkish
-                _state.update { it.copy(tuning = v[0] as Tuning, a4 = v[1] as Int, turkish = turkish, ahenk = v[3] as Ahenk) }
+                _state.update { it.copy(tuning = v[0] as Tuning, a4 = v[1] as Int, turkish = turkish, ahenk = v[3] as Ahenk, labels = v[4] as TurkishLabels) }
                 if (switched || (turkish && _state.value.etude.title != _state.value.tjins.name)) newEtude()
             }
         }
@@ -234,7 +238,7 @@ class JinsViewModel : ViewModel() {
         val answer = s.etude.phrases.getOrNull(s.answer) ?: return
         val notes = collector?.finish().orEmpty()
         collector = null
-        _state.update { it.copy(phase = AnswerPhase.Done, answerNotes = notes, verdict = AnswerCheck.evaluate(notes, answer.station, answer.notes.last().degree, s.pitchScale)) }
+        _state.update { it.copy(phase = AnswerPhase.Done, answerNotes = notes, verdict = AnswerCheck.evaluate(notes, answer.station, answer.notes.last().degree, s.pitchScale) { answer.station.nameIn(s.labels, s.ahenk, it) }) }
     }
 
     private var collector: NoteCollector? = null

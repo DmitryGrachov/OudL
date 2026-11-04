@@ -38,7 +38,7 @@ data class TurkishMakamUiState(
     val seyirOpen: Boolean = false,
     /** Makams the geçkis came from, to step back. */
     val trail: List<GeckiStop> = emptyList(),
-    val labels: TurkishLabels = TurkishLabels.Perde,
+    val labels: TurkishLabels = OudSettings.turkishLabels.value,
     val tuning: Tuning = OudSettings.tuning.value,
     val a4: Int = OudSettings.a4.value,
     val ahenk: Ahenk = OudSettings.ahenk.value,
@@ -99,11 +99,7 @@ data class TurkishMakamUiState(
     fun degreeOf(tone: TurkishTone): Int? = scaleTones.indexOfFirst { it.sameClass(tone) }.takeIf { it >= 0 }
 
     /** Name of a tone in the chosen style: perde, written note, or the note as it sounds. */
-    fun labelOf(tone: TurkishTone): String = when (labels) {
-        TurkishLabels.Perde -> Perdes.of(tone.written) ?: tone.spelling.label()
-        TurkishLabels.Written -> tone.spelling.label()
-        TurkishLabels.Sounding -> tone.spelling.sounding(tone.written, ahenk).label()
-    }
+    fun labelOf(tone: TurkishTone): String = labels.name(tone, ahenk)
 
     companion object {
         const val IN_TUNE_CENTS = 10.0
@@ -130,8 +126,8 @@ class TurkishMakamViewModel : ViewModel() {
 
     init {
         viewModelScope.launch {
-            combine(OudSettings.tuning, OudSettings.a4, OudSettings.ahenk, ::Triple).collect { (tuning, a4, ahenk) ->
-                _state.update { it.copy(tuning = tuning, a4 = a4, ahenk = ahenk) }
+            combine(OudSettings.tuning, OudSettings.a4, OudSettings.ahenk, OudSettings.turkishLabels) { t, a, h, l -> listOf(t, a, h, l) }.collect { v ->
+                _state.update { it.copy(tuning = v[0] as Tuning, a4 = v[1] as Int, ahenk = v[2] as Ahenk, labels = v[3] as TurkishLabels) }
             }
         }
     }
@@ -168,7 +164,7 @@ class TurkishMakamViewModel : ViewModel() {
 
     fun setDescending(descending: Boolean) = _state.update { it.copy(descending = descending, exercise = null) }
     fun toggleSeyir() = _state.update { it.copy(seyirOpen = !it.seyirOpen) }
-    fun setLabels(labels: TurkishLabels) = _state.update { it.copy(labels = labels) }
+    fun setLabels(labels: TurkishLabels) = OudSettings.setTurkishLabels(labels)
     fun toggleExtended() = _state.update { it.copy(extended = !it.extended) }
     fun toggleStaff() = _state.update { it.copy(showStaff = !it.showStaff) }
     fun setAhenk(ahenk: Ahenk) = OudSettings.setAhenk(ahenk)

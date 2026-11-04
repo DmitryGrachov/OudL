@@ -66,6 +66,7 @@ import com.udl.oud.turkish.TurkishGrammar
 import com.udl.oud.turkish.TurkishJinsCatalog
 import com.udl.oud.turkish.TurkishMakam
 import com.udl.oud.turkish.komaStepLabel
+import com.udl.oud.turkish.nameIn
 import com.udl.oud.ui.theme.InTuneGreen
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -115,7 +116,10 @@ fun JinsRoute(onOpenMakam: (TurkishMakam) -> Unit, onOpenMaqam: (Maqam) -> Unit,
     }
 }
 
-private fun JinsUiState.name(degree: Int) = station.label(degree)
+private fun JinsUiState.name(degree: Int) = if (turkish) station.nameIn(labels, ahenk, degree) else station.label(degree)
+/** A note of the etude, named in the chosen style on a Turkish oud. */
+private fun JinsUiState.noteName(station: com.udl.oud.taqsim.Station, n: com.udl.oud.taqsim.TaqsimNote) =
+    if (turkish) station.nameIn(labels, ahenk, n.degree) else n.name
 private fun rootName(step: Int) = Spelling.of(step).label(NoteLabels.Solfege)
 private fun perdeName(written: Int) = Perdes.of(written) ?: written.toString()
 
@@ -241,6 +245,7 @@ private fun TurkishJinsPicker(state: JinsUiState, vm: JinsViewModel) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+    TurkishLabelChips(state.labels)
 }
 
 /** Notes, intervals, colour, pillars and how the root is reached. */
@@ -536,7 +541,7 @@ private fun EtudePanel(state: JinsUiState, vm: JinsViewModel) {
                                 k in p.themeNotes -> SpanStyle(color = MaterialTheme.colorScheme.primary)
                                 else -> SpanStyle(color = muted)
                             }
-                            withStyle(style) { append(" ${n.name} ") }
+                            withStyle(style) { append(" ${state.noteName(p.station, n)} ") }
                         }
                     },
                     Modifier.weight(1f),
@@ -557,8 +562,8 @@ private fun JinsAnswerPanel(state: JinsUiState, vm: JinsViewModel) {
     Column(Modifier.fillMaxWidth().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Ответь в джинсе", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Text(
-            "Вопрос останавливается на ${question.notes.last().name}. " +
-                "Ответь своей фразой из нот джинса и приди на ${answer.notes.last().name}; " +
+            "Вопрос останавливается на ${state.noteName(question.station, question.notes.last())}. " +
+                "Ответь своей фразой из нот джинса и приди на ${state.noteName(answer.station, answer.notes.last())}; " +
                 "не забудь цветную ступень ${state.colour.joinToString { state.name(it) }}.",
             style = MaterialTheme.typography.bodyMedium,
             color = muted,

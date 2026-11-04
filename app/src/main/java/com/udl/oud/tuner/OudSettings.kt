@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.udl.oud.turkish.TurkishLabels
 
 /**
  * Instrument settings shared by every screen and kept between launches: which oud, its tuning,
@@ -17,6 +18,7 @@ object OudSettings {
     private const val KEY_TUNING = "tuning"
     private const val KEY_A4 = "a4"
     private const val KEY_AHENK = "ahenk"
+    private const val KEY_TURKISH_LABELS = "turkish_labels"
     private const val DEFAULT_A4 = 440
 
     private var prefs: SharedPreferences? = null
@@ -25,6 +27,7 @@ object OudSettings {
     private val _tuning = MutableStateFlow(Tunings.arabic.first())
     private val _a4 = MutableStateFlow(DEFAULT_A4)
     private val _ahenk = MutableStateFlow(Ahenk.Bolahenk)
+    private val _turkishLabels = MutableStateFlow(TurkishLabels.Perde)
 
     val oud: StateFlow<OudType> = _oud.asStateFlow()
 
@@ -32,6 +35,9 @@ object OudSettings {
     val tuning: StateFlow<Tuning> = _tuning.asStateFlow()
     val a4: StateFlow<Int> = _a4.asStateFlow()
     val ahenk: StateFlow<Ahenk> = _ahenk.asStateFlow()
+
+    /** How Turkish notes are named on every screen: by perde, as written, or as they sound. */
+    val turkishLabels: StateFlow<TurkishLabels> = _turkishLabels.asStateFlow()
 
     /** Loads what was saved last time; call once at start-up, before any screen reads. */
     fun init(context: Context) {
@@ -45,6 +51,8 @@ object OudSettings {
         val tunings = Tunings.forOud(oud, _ahenk.value)
         _tuning.value = tunings.firstOrNull { it.name == p.getString(KEY_TUNING, null) } ?: tunings.first()
         _a4.value = p.getInt(KEY_A4, DEFAULT_A4)
+        _turkishLabels.value = p.getString(KEY_TURKISH_LABELS, null)?.let { name -> TurkishLabels.entries.firstOrNull { it.name == name } }
+            ?: TurkishLabels.Perde
     }
 
     /** Switching the oud also switches to its first tuning. */
@@ -74,12 +82,18 @@ object OudSettings {
         save()
     }
 
+    fun setTurkishLabels(labels: TurkishLabels) {
+        _turkishLabels.value = labels
+        save()
+    }
+
     private fun save() {
         prefs?.edit()
             ?.putString(KEY_OUD, _oud.value.name)
             ?.putString(KEY_TUNING, _tuning.value.name)
             ?.putInt(KEY_A4, _a4.value)
             ?.putString(KEY_AHENK, _ahenk.value.name)
+            ?.putString(KEY_TURKISH_LABELS, _turkishLabels.value.name)
             ?.apply()
     }
 }

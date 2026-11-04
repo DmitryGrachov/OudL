@@ -1,6 +1,7 @@
 package com.udl.oud.turkish
 
 import com.udl.oud.taqsim.Station
+import com.udl.oud.tuner.Ahenk
 
 /** Where a Turkish jins is found: in which makam, below (on the durak) or above, and on which perde. */
 data class TurkishAppearance(val makam: TurkishMakam, val upper: Boolean, val durak: Int)
@@ -49,11 +50,11 @@ object TurkishJinsCatalog {
 }
 
 /** A jins' scale by its degrees only: below the root, the scale's own seventh (no seyir needed). */
-data class TurkishJinsScale(val makam: TurkishMakam) : com.udl.oud.taqsim.StationScale {
+data class TurkishJinsScale(val makam: TurkishMakam) : com.udl.oud.taqsim.StationScale, TurkishTones {
     override val perOctave: Int get() = Koma.PER_OCTAVE
     private val degrees = makam.degrees()
 
-    fun tone(degree: Int): TurkishTone =
+    override fun tone(degree: Int): TurkishTone =
         degrees[Math.floorMod(degree, 7)].let { TurkishTone(it.written, it.spelling) }.octave(Math.floorDiv(degree, 7))
 
     override fun step(degree: Int): Int = tone(degree).written
@@ -61,3 +62,19 @@ data class TurkishJinsScale(val makam: TurkishMakam) : com.udl.oud.taqsim.Statio
     override fun staff(degree: Int) = tone(degree).staffNote()
     override fun hz(degree: Int): Double = tone(degree).frequency(440.0, com.udl.oud.tuner.Ahenk.Bolahenk)
 }
+
+/** A Turkish scale that can give each degree as a tone, to name it in any [TurkishLabels] style. */
+interface TurkishTones {
+    fun tone(degree: Int): TurkishTone
+}
+
+/** A tone named in this style: its perde, the written note, or the note as it sounds in [ahenk]. */
+fun TurkishLabels.name(tone: TurkishTone, ahenk: Ahenk): String = when (this) {
+    TurkishLabels.Perde -> Perdes.of(tone.written) ?: tone.spelling.label()
+    TurkishLabels.Written -> tone.spelling.label()
+    TurkishLabels.Sounding -> tone.spelling.sounding(tone.written, ahenk).label()
+}
+
+/** A station's degree named in [labels] style on a Turkish scale; any other scale keeps its own name. */
+fun Station.nameIn(labels: TurkishLabels, ahenk: Ahenk, degree: Int): String =
+    (scale as? TurkishTones)?.let { labels.name(it.tone(degree), ahenk) } ?: label(degree)
