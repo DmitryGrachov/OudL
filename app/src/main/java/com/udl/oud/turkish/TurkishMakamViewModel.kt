@@ -11,6 +11,7 @@ import com.udl.oud.audio.PitchTracker
 import com.udl.oud.audio.ReferenceTone
 import com.udl.oud.fretboard.Drill
 import com.udl.oud.fretboard.SteadyNote
+import com.udl.oud.tuner.Ahenk
 import com.udl.oud.tuner.OudSettings
 import com.udl.oud.tuner.Tuning
 import com.udl.oud.tuner.centsBetween
@@ -24,50 +25,82 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.math.abs
-import kotlin.math.pow
+
+/** Where a geçki left from: the makam picked and the durak it was moved to, if any. */
+data class GeckiStop(val base: TurkishMakam, val durak: Int?)
 
 data class TurkishMakamUiState(
-    val makam: TurkishMakam = TurkishMakams.all.first(),
+    /** The makam as picked from the list. */
+    val base: TurkishMakam = TurkishMakams.all.first(),
+    /** Şed: the durak it is moved to, or null on its own durak. */
+    val durak: Int? = null,
+    val descending: Boolean = false,
+    val seyirOpen: Boolean = false,
+    /** Makams the geçkis came from, to step back. */
+    val trail: List<GeckiStop> = emptyList(),
     val labels: TurkishLabels = TurkishLabels.Perde,
     val tuning: Tuning = OudSettings.tuning.value,
     val a4: Int = OudSettings.a4.value,
+    val ahenk: Ahenk = OudSettings.ahenk.value,
     val extended: Boolean = false,
     val live: Boolean = true,
     val frequency: Double? = null,
-    /** Degree and octave the app is sounding now, to light it up. */
-    val playing: Pair<Int, Int>? = null,
-    /** Scale drill: steps index into [TurkishBoard.ascending]. */
+    /** Written pitch the app is sounding now, to light it up. */
+    val playing: Int? = null,
+    /** Drill: steps index into [drillTones]. */
     val exercise: Drill? = null,
+    val drillTones: List<TurkishTone> = emptyList(),
+    /** The karar being drilled, to run it again; null for a scale drill. */
+    val drillKarar: TurkishKarar? = null,
     val error: String? = null,
 ) {
+    val makam: TurkishMakam get() = durak?.let { base.onDurak(it) } ?: base
+
+    /** The named şed makam the moved scale is, when it has a name (Zirgüleli Hicaz on Rast: Hicazkâr). */
+    val sedName: TurkishMakam? get() = durak?.let { TurkishMakams.namedSed(base, it) }
+
+    val seyir: TurkishSeyir get() = TurkishSeyirs.of(makam)
     val degrees: List<TurkishDegree> get() = makam.degrees()
 
-    /** Nearest makam degree to what the mic hears, or null when silent or far from every degree. */
-    val heard: TurkishHeard?
-        get() = frequency?.let { TurkishBoard.nearest(makam, it, a4.toDouble()) }
+    /** The seven degrees in the chosen direction: going down, with the inici changes. */
+    val scaleTones: List<TurkishTone> get() = TurkishScale.degreeTones(makam, descending)
 
-    /** The drill's due note as (degree, octave). */
-    val target: Pair<Int, Int>? get() = exercise?.target?.let { TurkishBoard.ascending()[it] }
+    /** The scale walked through in the chosen direction, durak to octave or back. */
+    val steps: List<TurkishTone> get() = if (descending) TurkishScale.descending(makam) else TurkishScale.ascending(makam)
+
+    val yeden: TurkishTone get() = TurkishScale.yeden(makam)
+
+    /** Tones drawn on the neck: the scale, and with the seyir open the yeden when it isn't a degree. */
+    val boardTones: List<TurkishTone>
+        get() {
+            val tones = scaleTones
+            val y = yeden
+            return if (seyirOpen && tones.none { it.sameClass(y) }) tones + y else tones
+        }
+
+    /** Nearest drawn tone to what the mic hears, or null when silent. */
+    val heard: TurkishHeard?
+        get() = frequency?.let { TurkishBoard.nearest(boardTones, it, a4.toDouble(), ahenk) }
+
+    val target: TurkishTone? get() = exercise?.target?.let { drillTones.getOrNull(it) }
 
     val exerciseCents: Double?
         get() {
-            val (degree, octave) = target ?: return null
+            val t = target ?: return null
             val f = frequency ?: return null
-            return centsBetween(f, frequencyOf(degree, octave))
+            return centsBetween(f, frequencyOf(t))
         }
 
-    fun frequencyOf(degree: Int, octave: Int): Double =
-        TurkishBoard.degreeFrequencies(makam, a4.toDouble())[degree] * 2.0.pow(octave)
+    fun frequencyOf(tone: TurkishTone): Double = tone.frequency(a4.toDouble(), ahenk)
 
-    /** Name of a degree in the chosen style: perde, written note, or the note as it sounds. */
-    fun labelOf(degree: Int, octave: Int): String {
-        val d = degrees[degree]
-        val written = d.written + octave * Koma.PER_OCTAVE
-        return when (labels) {
-            TurkishLabels.Perde -> Perdes.of(written) ?: d.spelling.label()
-            TurkishLabels.Written -> d.spelling.label()
-            TurkishLabels.Sounding -> d.spelling.sounding(written).label()
-        }
+    /** Degree (0..6) of a tone in the chosen direction, or null for the yeden and other tones. */
+    fun degreeOf(tone: TurkishTone): Int? = scaleTones.indexOfFirst { it.sameClass(tone) }.takeIf { it >= 0 }
+
+    /** Name of a tone in the chosen style: perde, written note, or the note as it sounds. */
+    fun labelOf(tone: TurkishTone): String = when (labels) {
+        TurkishLabels.Perde -> Perdes.of(tone.written) ?: tone.spelling.label()
+        TurkishLabels.Written -> tone.spelling.label()
+        TurkishLabels.Sounding -> tone.spelling.sounding(tone.written, ahenk).label()
     }
 
     companion object {
@@ -78,7 +111,7 @@ data class TurkishMakamUiState(
     }
 }
 
-/** The Turkish makam tab: the board on the koma grid, live pitch against the makam, playback, drill. */
+/** The Turkish makam tab: the board on the koma grid, seyir, şed, live pitch, playback, drills. */
 class TurkishMakamViewModel : ViewModel() {
     private val _state = MutableStateFlow(TurkishMakamUiState())
     val state = _state.asStateFlow()
@@ -95,8 +128,8 @@ class TurkishMakamViewModel : ViewModel() {
 
     init {
         viewModelScope.launch {
-            combine(OudSettings.tuning, OudSettings.a4) { tuning, a4 -> tuning to a4 }.collect { (tuning, a4) ->
-                _state.update { it.copy(tuning = tuning, a4 = a4) }
+            combine(OudSettings.tuning, OudSettings.a4, OudSettings.ahenk, ::Triple).collect { (tuning, a4, ahenk) ->
+                _state.update { it.copy(tuning = tuning, a4 = a4, ahenk = ahenk) }
             }
         }
     }
@@ -119,33 +152,90 @@ class TurkishMakamViewModel : ViewModel() {
         _state.update { it.copy(frequency = null) }
     }
 
-    fun select(makam: TurkishMakam) = _state.update { it.copy(makam = makam, exercise = null) }
+    // Changing the makam, durak or direction ends a drill: its notes no longer match.
+
+    /** Picking a makam by hand starts afresh: back on its own durak, the geçki trail dropped. */
+    fun select(makam: TurkishMakam) = _state.update {
+        it.copy(base = makam, durak = null, trail = emptyList(), exercise = null)
+    }
+
+    /** Şed: moves the makam to [written]; its own durak clears the move. */
+    fun setDurak(written: Int) = _state.update {
+        it.copy(durak = written.takeIf { w -> w != it.base.tonic }, exercise = null)
+    }
+
+    fun setDescending(descending: Boolean) = _state.update { it.copy(descending = descending, exercise = null) }
+    fun toggleSeyir() = _state.update { it.copy(seyirOpen = !it.seyirOpen) }
     fun setLabels(labels: TurkishLabels) = _state.update { it.copy(labels = labels) }
     fun toggleExtended() = _state.update { it.copy(extended = !it.extended) }
+    fun setAhenk(ahenk: Ahenk) = OudSettings.setAhenk(ahenk)
+
+    /** Follows a geçki from the seyir, remembering where it came from. */
+    fun gecki(gecki: Gecki) = _state.update {
+        val target = TurkishMakams.named(gecki.makam) ?: return@update it
+        val durak = it.makam.tonic + gecki.offset
+        val named = TurkishMakams.namedSed(target, durak)
+        val stop = GeckiStop(it.base, it.durak)
+        if (named != null) {
+            it.copy(base = named, durak = null, trail = it.trail + stop, descending = false, exercise = null)
+        } else {
+            it.copy(base = target, durak = durak.takeIf { d -> d != target.tonic }, trail = it.trail + stop, descending = false, exercise = null)
+        }
+    }
+
+    /** Returns to the makam the last geçki left. */
+    fun geckiBack() = _state.update {
+        val stop = it.trail.lastOrNull() ?: return@update it
+        it.copy(base = stop.base, durak = stop.durak, trail = it.trail.dropLast(1), descending = false, exercise = null)
+    }
 
     fun setLive(live: Boolean) {
         _state.update { it.copy(live = live) }
         if (!live) stop()
     }
 
-    fun play(degree: Int, octave: Int) = playSequence(listOf(degree to octave), NOTE_MS, ReferenceTone.DURATION_MS.toLong())
+    fun play(tone: TurkishTone) = playSequence(listOf(tone), listOf(NOTE_MS), listOf(ReferenceTone.DURATION_MS.toLong()))
 
+    /** Plays the scale in the chosen direction. */
     fun playScale() {
         _state.update { it.copy(exercise = null) }
-        playSequence(TurkishBoard.ascending(), SCALE_NOTE_MS, SCALE_TONE_MS)
+        val steps = _state.value.steps
+        playSequence(steps, List(steps.size) { SCALE_NOTE_MS }, List(steps.size) { SCALE_TONE_MS })
     }
 
-    fun startExercise() {
-        steady.reset()
-        awaitingPluck = false
-        _state.update { it.copy(exercise = Drill(TurkishBoard.ascending().indices.toList()), live = true) }
+    /** Plays a karar with its rhythm; each tone rings a little past its length so it sounds joined. */
+    fun playKarar(karar: TurkishKarar) {
+        _state.update { it.copy(exercise = null) }
+        val beatMs = 60_000.0 / KARAR_BPM
+        val lengths = karar.notes.map { (it.beats * beatMs).toLong() }
+        playSequence(TurkishScale.phrase(_state.value.makam, karar), lengths, lengths.map { (it * 1.4).toLong().coerceAtLeast(MIN_TONE_MS) })
+    }
+
+    /** "Play the scale" in the chosen direction. */
+    fun startExercise() = beginDrill(_state.value.steps, null)
+
+    /** "Repeat the karar": the same drill, note by note through the phrase. */
+    fun startKararDrill(karar: TurkishKarar) = beginDrill(TurkishScale.phrase(_state.value.makam, karar), karar)
+
+    fun restartExercise() {
+        val karar = _state.value.drillKarar
+        if (karar != null) startKararDrill(karar) else startExercise()
     }
 
     fun stopExercise() = _state.update { it.copy(exercise = null) }
 
-    private fun playSequence(notes: List<Pair<Int, Int>>, noteMs: Long, toneMs: Long) {
+    /** Drills need the mic, so starting one turns it on. */
+    private fun beginDrill(tones: List<TurkishTone>, karar: TurkishKarar?) {
+        steady.reset()
+        awaitingPluck = false
+        _state.update { it.copy(exercise = Drill(tones.indices.toList()), drillTones = tones, drillKarar = karar, live = true) }
+    }
+
+    /** Plays [tones] one after another: tone i lasts [noteMs]`[i]` and rings for [toneMs]`[i]`. */
+    private fun playSequence(tones: List<TurkishTone>, noteMs: List<Long>, toneMs: List<Long>) {
         val s = _state.value
-        ignoreMicUntil = SystemClock.elapsedRealtime() + notes.size * noteMs + toneMs
+        // Don't light up the speaker's own tone as if it were played on the oud.
+        ignoreMicUntil = SystemClock.elapsedRealtime() + noteMs.sum() + toneMs.last()
         tracker.reset()
         _state.update { it.copy(frequency = null) }
         playJob?.cancel()
@@ -153,10 +243,10 @@ class TurkishMakamViewModel : ViewModel() {
         val run = ++playRun
         playJob = viewModelScope.launch(Dispatchers.Default) {
             try {
-                notes.forEach { (degree, octave) ->
-                    _state.update { it.copy(playing = degree to octave) }
-                    tone.play(s.frequencyOf(degree, octave), toneMs.toInt())
-                    delay(noteMs)
+                tones.forEachIndexed { i, t ->
+                    _state.update { it.copy(playing = t.written) }
+                    tone.play(s.frequencyOf(t), toneMs[i].toInt())
+                    delay(noteMs[i])
                 }
                 delay(HIGHLIGHT_TAIL_MS)
             } finally {
@@ -169,7 +259,7 @@ class TurkishMakamViewModel : ViewModel() {
         val now = SystemClock.elapsedRealtime()
         if (now < ignoreMicUntil) return
         val s = _state.value
-        val targetFrequency = s.target?.let { (degree, octave) -> s.frequencyOf(degree, octave) }
+        val targetFrequency = s.target?.let(s::frequencyOf)
         val update = tracker.update(reading, now) {
             val f = it.frequency.toDouble()
             // With a known target the octave question has a sure answer; otherwise keep the reading.
@@ -205,5 +295,7 @@ class TurkishMakamViewModel : ViewModel() {
         const val SCALE_NOTE_MS = 550L
         const val SCALE_TONE_MS = 900L
         const val HIGHLIGHT_TAIL_MS = 300L
+        const val KARAR_BPM = 80
+        const val MIN_TONE_MS = 400L
     }
 }

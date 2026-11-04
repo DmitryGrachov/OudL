@@ -27,6 +27,10 @@ fun centsBetween(frequency: Double, target: Double): Double = 1200 * log2(freque
 
 /** An oud tuning; [courses] go from the bass course to the treble course. */
 data class Tuning(val name: String, val courses: List<Note>) {
+    /** The same tuning with every course moved by [semitones]; keeps the name. */
+    fun transposed(semitones: Int): Tuning =
+        if (semitones == 0) this else copy(courses = courses.map { Note(it.midi + semitones) })
+
     fun nearestCourse(frequency: Double, a4: Double): Int =
         courses.indices.minBy { abs(centsBetween(frequency, courses[it].frequency(a4))) }
 
@@ -67,8 +71,23 @@ object Tunings {
 
     val all = arabic + turkish
 
-    fun forOud(oud: OudType): List<Tuning> = when (oud) {
+    /** Tunings of [oud] as they sound; a Turkish oud is tuned down to its [ahenk]. */
+    fun forOud(oud: OudType, ahenk: Ahenk = Ahenk.Bolahenk): List<Tuning> = when (oud) {
         OudType.Arabic -> arabic
-        OudType.Turkish -> turkish
+        OudType.Turkish -> turkish.map { it.transposed(ahenk.semitones) }
     }
+}
+
+/**
+ * Ahenk: the pitch level Turkish notation is played at, named after the ney sizes. Notation stays
+ * the same; the whole instrument sounds lower than in Bolahenk. Shifts follow the âhenk ladder
+ * (which perde of each ahenk sounds Mansur's dügâh), taken downwards from Bolahenk, as far as an
+ * oud can be tuned down. [komas] and [letters] spell the shift, [semitones] retunes the oud.
+ */
+enum class Ahenk(val title: String, val semitones: Int, val komas: Int, val letters: Int, val shift: String) {
+    Bolahenk("Bolâhenk", 0, 0, 0, "основной"),
+    Supurde("Süpürde", -2, -9, -1, "на тон ниже"),
+    Mustahsen("Müstahsen", -3, -13, -2, "на малую терцию ниже"),
+    Kiz("Kız", -5, -22, -3, "на кварту ниже"),
+    Mansur("Mansur", -7, -31, -4, "на квинту ниже"),
 }

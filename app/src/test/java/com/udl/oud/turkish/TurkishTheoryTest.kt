@@ -1,6 +1,8 @@
 package com.udl.oud.turkish
 
+import com.udl.oud.tuner.Ahenk
 import com.udl.oud.tuner.Note
+import com.udl.oud.tuner.OudType
 import com.udl.oud.tuner.Tunings
 import com.udl.oud.tuner.centsBetween
 import org.junit.Assert.assertEquals
@@ -16,7 +18,7 @@ class TurkishTheoryTest {
 
     @Test fun everyMakamIsAnOctaveOf53Komas() {
         // The constructor checks the octave and both ajnas; building the list must not throw.
-        assertEquals(12, TurkishMakams.all.size)
+        assertEquals(18, TurkishMakams.all.size)
         TurkishMakams.all.forEach { assertEquals(it.name, 53, it.intervals.sum()) }
     }
 
@@ -59,26 +61,29 @@ class TurkishTheoryTest {
 
     @Test fun ussakDurakIsTheOpenEStringOfTheTurkishOud() {
         val tuning = Tunings.turkish.first() // C♯2 F♯2 B2 E3 A3 D4
-        val marks = TurkishBoard.marks(makam("Uşşak"), tuning, a4, 700)
-        assertTrue(marks.any { it.course == 3 && it.cents == 0.0 && it.degree == 0 && it.octave == 0 })
+        val ussak = makam("Uşşak")
+        val durak = TurkishScale.tone(ussak, 0)
+        val marks = TurkishBoard.marks(TurkishScale.degreeTones(ussak, false), tuning, a4, Ahenk.Bolahenk, 700)
+        assertTrue(marks.any { it.course == 3 && it.cents == 0.0 && it.tone == durak })
     }
 
     @Test fun segahMarkIsAKomaBelowTheSemitoneGrid() {
         val tuning = Tunings.turkish.first()
         // Segâh (written B♭¹4) sounds F♯3 − 1 koma: on the E3 course that is 200 − 22.6 cents up.
-        val mark = TurkishBoard.marks(makam("Rast"), tuning, a4, 700)
-            .first { it.course == 3 && it.degree == 2 && it.octave == 0 }
+        val rast = makam("Rast")
+        val segah = TurkishScale.tone(rast, 2)
+        val mark = TurkishBoard.marks(TurkishScale.degreeTones(rast, false), tuning, a4, Ahenk.Bolahenk, 700)
+            .first { it.course == 3 && it.tone == segah }
         assertEquals(200 - Koma.CENTS, mark.cents, 0.01)
     }
 
     @Test fun heardPitchFindsItsDegree() {
-        val rast = makam("Rast")
-        val segah = TurkishBoard.degreeFrequencies(rast, a4)[2]
-        val heard = TurkishBoard.nearest(rast, segah * 1.004, a4) // ~7 cents sharp
-        assertEquals(2, heard.degree)
-        assertEquals(0, heard.octave)
+        val tones = TurkishScale.degreeTones(makam("Rast"), false)
+        val segah = tones[2].frequency(a4, Ahenk.Bolahenk)
+        val heard = TurkishBoard.nearest(tones, segah * 1.004, a4, Ahenk.Bolahenk) // ~7 cents sharp
+        assertEquals(tones[2], heard.tone)
         assertTrue(abs(heard.cents - 6.9) < 0.2)
-        assertEquals(1, TurkishBoard.nearest(rast, segah * 2, a4).octave)
+        assertEquals(tones[2].octave(1), TurkishBoard.nearest(tones, segah * 2, a4, Ahenk.Bolahenk).tone)
     }
 
     @Test fun komaStepsHaveTheirTurkishNames() =

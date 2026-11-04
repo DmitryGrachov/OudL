@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.udl.oud.tuner.Ahenk
 import com.udl.oud.tuner.Note
 import com.udl.oud.tuner.OudType
 import com.udl.oud.tuner.Tuning
@@ -79,6 +80,7 @@ fun TunerRoute(vm: TunerViewModel = viewModel()) {
         actions = TunerActions(
             onSelectOud = vm::selectOud,
             onSelectTuning = vm::selectTuning,
+            onSelectAhenk = vm::selectAhenk,
             onSetMode = vm::setMode,
             onAuto = vm::setAuto,
             onRestartCourse = vm::restartCourse,
@@ -91,6 +93,7 @@ fun TunerRoute(vm: TunerViewModel = viewModel()) {
 class TunerActions(
     val onSelectOud: (OudType) -> Unit,
     val onSelectTuning: (Tuning) -> Unit,
+    val onSelectAhenk: (Ahenk) -> Unit,
     val onSetMode: (TunerMode) -> Unit,
     val onAuto: () -> Unit,
     val onRestartCourse: () -> Unit,
@@ -312,13 +315,36 @@ private fun Controls(
 
         Text("Строй", style = MaterialTheme.typography.labelLarge)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Tunings.forOud(state.oud).forEach { tuning ->
+            Tunings.forOud(state.oud, state.ahenk).forEach { tuning ->
                 FilterChip(
                     selected = tuning == state.tuning,
                     onClick = { actions.onSelectTuning(tuning) },
                     label = { Text("${tuning.name}  (${tuning.courses.joinToString(" ") { it.latin }})") },
                 )
             }
+        }
+
+        if (state.oud == OudType.Turkish) {
+            Text("Ахенк", style = MaterialTheme.typography.labelLarge)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Ahenk.entries.forEach { ahenk ->
+                    FilterChip(
+                        selected = ahenk == state.ahenk,
+                        onClick = { actions.onSelectAhenk(ahenk) },
+                        label = { Text(ahenk.title) },
+                    )
+                }
+            }
+            Text(
+                if (state.ahenk == Ahenk.Bolahenk) {
+                    "Bolâhenk — основной ахенк: запись звучит на октаву и кварту ниже (Rast — Ре)."
+                } else {
+                    "${state.ahenk.title}: весь уд ${state.ahenk.shift}, чем в Bolâhenk. Запись нот та же; " +
+                        "макамы и эталон следуют за строем."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
