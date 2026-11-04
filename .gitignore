@@ -8,3 +8,9 @@
 /captures/
 .externalNativeBuild/
 .cxx/
+
+# Release signing: the key and its passwords stay out of git (back them up!).
+/keystore/
+/keystore.properties
+*.jks
+/release/
