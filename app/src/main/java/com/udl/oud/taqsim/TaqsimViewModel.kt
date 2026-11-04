@@ -66,6 +66,7 @@ data class TaqsimUiState(
     val maqam: Maqam = Maqamat.all.first(),
     val length: TaqsimLength = TaqsimLength.Medium,
     val tempo: TaqsimTempo = TaqsimTempo.Normal,
+    val ornamentLevel: OrnamentLevel = OrnamentLevel.Light,
     val taqsim: Taqsim = TaqsimGenerator(1).generate(Maqamat.all.first(), TaqsimLength.Medium),
     /** Index into [Taqsim.notes] of the note sounding, or null when silent. */
     val playingNote: Int? = null,
@@ -82,6 +83,9 @@ data class TaqsimUiState(
     val drillPhrase: Int? = null,
     val error: String? = null,
 ) {
+    /** Ornament on each note of [Taqsim.notes] by index, for the chosen level. */
+    val ornaments: Map<Int, Ornament> get() = Ornamenter.decorate(taqsim, ornamentLevel)
+
     /** Phrase of each note of [Taqsim.notes]. */
     val phraseOfNote: List<Int> get() = taqsim.phrases.flatMapIndexed { i, p -> List(p.notes.size) { i } }
 
@@ -180,6 +184,7 @@ class TaqsimViewModel : ViewModel() {
     }
 
     fun setTempo(tempo: TaqsimTempo) = _state.update { it.copy(tempo = tempo) }
+    fun setOrnamentLevel(level: OrnamentLevel) = _state.update { it.copy(ornamentLevel = level) }
 
     /** A new taqsim on the same maqam. */
     fun regenerate() {
@@ -315,10 +320,16 @@ class TaqsimViewModel : ViewModel() {
         _state.update { it.copy(playing = true, exercise = null) }
         playJob = viewModelScope.launch {
             val pcm = withContext(Dispatchers.Default) {
-                val plucks = notes.mapIndexed { i, n ->
-                    val start = (starts[i] * SAMPLE_RATE / 1000).toInt()
-                    val held = (n.beats * pulse * SAMPLE_RATE / 1000).toInt()
-                    PluckSynth.Pluck(Pitch(n.step).frequency(a4), start, held)
+                // Each skeleton note becomes what the hands play: plain, or with its ornament.
+                val ornaments = s.ornaments
+                fun samples(ms: Double) = (ms * SAMPLE_RATE / 1000).toInt()
+                val plucks = notes.flatMapIndexed { i, n ->
+                    OrnamentSound.events(n.step, ornaments[first + i], starts[i], n.beats * pulse).map { e ->
+                        PluckSynth.Pluck(
+                            Pitch(e.step).frequency(a4), samples(e.startMs), samples(e.lengthMs), e.gain, e.legato,
+                            e.slideFromCents, samples(e.slideMs),
+                        )
+                    }
                 }
                 PluckSynth.toPcm(synth.render(plucks, (totalMs * SAMPLE_RATE / 1000).toInt(), s.taqsim.seed))
             }

@@ -56,6 +56,8 @@ import com.udl.oud.fretboard.StaffNote
 import com.udl.oud.taqsim.AnswerLevel
 import com.udl.oud.taqsim.AnswerPhase
 import com.udl.oud.taqsim.JinsGrammars
+import com.udl.oud.taqsim.OrnamentKind
+import com.udl.oud.taqsim.OrnamentLevel
 import com.udl.oud.taqsim.Station
 import com.udl.oud.taqsim.TaqsimLength
 import com.udl.oud.taqsim.TaqsimMode
@@ -199,6 +201,16 @@ private fun TaqsimControls(state: TaqsimUiState, vm: TaqsimViewModel) {
         TaqsimTempo.entries.forEach { t ->
             FilterChip(state.tempo == t, onClick = { vm.setTempo(t) }, label = { Text(t.title) })
         }
+        Text("·", Modifier.align(Alignment.CenterVertically), color = MaterialTheme.colorScheme.outline)
+        OrnamentChips(state, vm)
+    }
+}
+
+/** Skeleton, or with ornaments: the same phrase, plain or as a player would decorate it. */
+@Composable
+private fun OrnamentChips(state: TaqsimUiState, vm: TaqsimViewModel) {
+    OrnamentLevel.entries.forEach { l ->
+        FilterChip(state.ornamentLevel == l, onClick = { vm.setOrnamentLevel(l) }, label = { Text(l.title) })
     }
 }
 
@@ -243,6 +255,11 @@ private fun PhraseDetail(state: TaqsimUiState, vm: TaqsimViewModel) {
             style = MaterialTheme.typography.titleSmall,
         )
         Text(JinsGrammars.of(phrase.station.jins).about, style = MaterialTheme.typography.bodyMedium, color = muted)
+        val ornaments = state.ornaments
+        val here = phrase.notes.indices.mapNotNull { i -> ornaments[start + i]?.describe(noteName(phrase.notes[i])) }
+        if (here.isNotEmpty()) {
+            Text("Украшения: ${here.joinToString("; ")}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.tertiary)
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 buildAnnotatedString {
@@ -261,7 +278,17 @@ private fun PhraseDetail(state: TaqsimUiState, vm: TaqsimViewModel) {
                             n.beats >= 2.5 -> SpanStyle(color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                             else -> SpanStyle(color = MaterialTheme.colorScheme.onSurface)
                         }
-                        withStyle(style) { append(" ${noteName(n)} ") }
+                        val o = ornaments[start + i]
+                        withStyle(style) {
+                            append(" ")
+                            // A grace note is written small before its note, the other signs after it.
+                            if (o?.kind == OrnamentKind.GraceAbove || o?.kind == OrnamentKind.GraceBelow) {
+                                append("(${o.neighbourSpelling?.label(NoteLabels.Solfege)})")
+                            }
+                            append(noteName(n))
+                            if (o != null && o.kind != OrnamentKind.GraceAbove && o.kind != OrnamentKind.GraceBelow) append(o.kind.sign)
+                            append(" ")
+                        }
                     }
                 },
                 Modifier.weight(1f),
@@ -392,6 +419,8 @@ private fun AnswerPanel(state: TaqsimUiState, vm: TaqsimViewModel) {
             TaqsimTempo.entries.forEach { t ->
                 FilterChip(state.tempo == t, onClick = { vm.setTempo(t) }, label = { Text(t.title) })
             }
+            Text("·", Modifier.align(Alignment.CenterVertically), color = MaterialTheme.colorScheme.outline)
+            OrnamentChips(state, vm)
         }
         Text(
             buildAnnotatedString {
