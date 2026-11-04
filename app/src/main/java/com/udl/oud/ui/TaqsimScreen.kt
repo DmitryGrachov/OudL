@@ -58,6 +58,7 @@ import com.udl.oud.fretboard.Pitch
 import com.udl.oud.fretboard.StaffNote
 import com.udl.oud.taqsim.AnswerLevel
 import com.udl.oud.taqsim.AnswerPhase
+import com.udl.oud.taqsim.FreePlay
 import com.udl.oud.taqsim.JinsGrammars
 import com.udl.oud.taqsim.OrnamentKind
 import com.udl.oud.taqsim.OrnamentLevel
@@ -103,12 +104,14 @@ fun TaqsimRoute(vm: TaqsimViewModel = viewModel()) {
                     }
                 }
                 MaqamPicker(state, vm)
-                if (state.mode == TaqsimMode.Listen) {
-                    TaqsimControls(state, vm)
-                    PhraseStrip(state, vm)
-                    PhraseDetail(state, vm)
-                } else {
-                    AnswerPanel(state, vm)
+                when (state.mode) {
+                    TaqsimMode.Listen -> {
+                        TaqsimControls(state, vm)
+                        PhraseStrip(state, vm)
+                        PhraseDetail(state, vm)
+                    }
+                    TaqsimMode.Answer -> AnswerPanel(state, vm)
+                    TaqsimMode.Free -> FreePanel(state, vm)
                 }
                 Row(Modifier.fillMaxWidth().height(if (wide) 360.dp else 300.dp).padding(top = 8.dp)) {
                     TaqsimBoard(state, Modifier.weight(1f).fillMaxHeight())
@@ -354,7 +357,12 @@ private fun TaqsimBoard(state: TaqsimUiState, modifier: Modifier) {
     val measurer = rememberTextMeasurer()
     val maxCents = Fretboard.NECK_CENTS
     val positions = remember(state.tuning) { Fretboard.positions(state.tuning, maxCents) }
-    val station: Station = state.taqsim.phrases[state.shownPhrase].station
+    // In free mode the board shows the maqam itself from its tonic; otherwise the phrase's station.
+    val station: Station = if (state.mode == TaqsimMode.Free) {
+        com.udl.oud.taqsim.TaqsimSayrs.Stations(state.maqam, state.maqam.tonic).qafla
+    } else {
+        state.taqsim.phrases[state.shownPhrase].station
+    }
     // Pitch classes of the station's scale, with the degree each belongs to.
     val degreeOfClass = remember(station) { (0 until 7).associateBy { station.step(it).mod(24) } }
     val heard = state.heard?.takeIf { abs(it.second) <= 40 }
@@ -521,4 +529,96 @@ private fun TaqsimOutline(state: TaqsimUiState) {
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/**
+ * Free mode: you play anything; the phrases appear as you go with their jins and where they
+ * rest, and "Разбор" reviews the whole: the maqam, the path through its sayr, what to try next.
+ */
+@Composable
+private fun FreePanel(state: TaqsimUiState, vm: TaqsimViewModel) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (state.freeOn) {
+                Button(onClick = vm::stopFree) { Text("■ Разбор") }
+            } else {
+                Button(onClick = vm::startFree) { Text(if (state.freeReview == null) "● Начать" else "● Сыграть снова") }
+            }
+            FilterChip(state.freeInChosen, onClick = { vm.setFreeInChosen(true) }, label = { Text("Играю в ${state.maqam.name}") })
+            FilterChip(!state.freeInChosen, onClick = { vm.setFreeInChosen(false) }, label = { Text("Угадай макам") })
+        }
+        Text(
+            if (state.freeOn) {
+                "Играй свободно — фразы появятся ниже. Пауза больше секунды начинает новую фразу. Когда закончишь — «Разбор»."
+            } else {
+                "Импровизируй на уде сколько хочешь: приложение проследит, в каком ты джинсе, где останавливаешься и как идёшь по сайру."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = muted,
+        )
+
+        val review = state.freeReview
+        if (state.freeOn || review == null) {
+            // Live: phrases so far and the maqam it sounds like.
+            val phrases = FreePlay.phrases(state.freeNotes)
+            if (phrases.isNotEmpty()) {
+                val best = FreePlay.maqamFits(phrases).firstOrNull()
+                best?.let {
+                    Text(
+                        "Пока похоже на: ${it.maqam.name} (${(it.share * 100).roundToInt()}% нот в нём)",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                phrases.forEachIndexed { i, p ->
+                    val j = FreePlay.jinsOf(p)
+                    Text(
+                        "${i + 1}. " + (j?.let { "${it.jins.name} на ${FreePlay.name(it.root)}" } ?: "…") +
+                            " · остановка на ${FreePlay.name(p.last.step)} · ${p.notes.size} нот",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
+            }
+            return
+        }
+
+        // The review.
+        val maqam = review.maqam
+        if (maqam != null) {
+            Text(
+                buildAnnotatedString {
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append(if (state.freeInChosen) "Разбор в ${maqam.name}" else "Похоже на ${maqam.name}")
+                    }
+                    val others = review.fits.take(3).filter { it.maqam != maqam }
+                    if (others.isNotEmpty()) {
+                        withStyle(SpanStyle(color = muted)) { append("   ·   также похоже на: ${others.joinToString { it.maqam.name }}") }
+                    }
+                },
+                style = MaterialTheme.typography.titleLarge,
+            )
+        }
+        Text("Путь по сайру", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        review.phrases.forEachIndexed { i, p ->
+            Text(
+                buildAnnotatedString {
+                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append("${i + 1}. ${p.place}") }
+                    withStyle(SpanStyle(color = muted)) {
+                        append("  · остановка на ${p.rest} · ${p.phrase.notes.size} нот:  ")
+                        append(p.phrase.notes.joinToString(" ") { FreePlay.name(it.step) })
+                    }
+                },
+                style = MaterialTheme.typography.bodyLarge,
+            )
+        }
+        review.points.forEach { p ->
+            Text(
+                "${if (p.passed) "✓" else "✗"}  ${p.text}",
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (p.passed) InTuneGreen else MaterialTheme.colorScheme.tertiary,
+            )
+        }
+        review.tips.forEach { t -> Text("💡 $t", style = MaterialTheme.typography.bodyLarge) }
+    }
 }

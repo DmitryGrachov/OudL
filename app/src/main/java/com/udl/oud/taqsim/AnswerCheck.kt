@@ -6,7 +6,7 @@ import com.udl.oud.tuner.centsBetween
 import kotlin.math.abs
 
 /** A note the player played: its pitch on the quarter-tone grid and how far off it was. */
-data class HeardNote(val step: Int, val cents: Double)
+data class HeardNote(val step: Int, val cents: Double, val startMs: Long = 0, val durationMs: Long = 0)
 
 /**
  * Turns the mic's stream into separate notes: a new pluck, a slide of more than [newNoteCents]
@@ -18,6 +18,8 @@ class NoteCollector(
     private val newNoteCents: Double = 70.0,
 ) {
     private val current = mutableListOf<Double>()
+    private var startedAt = 0L
+    private var lastAt = 0L
     private val done = mutableListOf<HeardNote>()
 
     /** When a note last sounded, to tell the answer is over after a pause. */
@@ -31,6 +33,8 @@ class NoteCollector(
     fun steady(frequency: Double, now: Long) {
         lastSoundAt = now
         if (current.size >= minReadings && abs(centsBetween(frequency, median())) > newNoteCents) close()
+        if (current.isEmpty()) startedAt = now
+        lastAt = now
         current += frequency
     }
 
@@ -50,11 +54,16 @@ class NoteCollector(
 
     private fun median() = current.sorted()[current.size / 2]
 
+    private companion object {
+        /** About how long one reading covers (the mic's hop). */
+        const val READING_MS = 23L
+    }
+
     private fun close() {
         if (current.size >= minReadings) {
             val f = median()
             val p = Pitch.nearest(f, a4, quarterTones = true)
-            done += HeardNote(p.step, centsBetween(f, p.frequency(a4)))
+            done += HeardNote(p.step, centsBetween(f, p.frequency(a4)), startedAt, lastAt - startedAt + READING_MS)
         }
         current.clear()
     }

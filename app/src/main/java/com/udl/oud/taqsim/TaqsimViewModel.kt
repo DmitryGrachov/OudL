@@ -42,6 +42,7 @@ enum class TaqsimTempo(val title: String, val pulseMs: Double) {
 enum class TaqsimMode(val title: String) {
     Listen("Слушать"),
     Answer("Ответь"),
+    Free("Свободно"),
 }
 
 /** Where the question is asked: low (answer comes home to the tonic) or high (to the ghammaz). */
@@ -63,6 +64,11 @@ data class TaqsimUiState(
     /** Notes heard so far in the player's answer. */
     val answerNotes: List<HeardNote> = emptyList(),
     val verdict: AnswerVerdict? = null,
+    /** Free mode: listening, the notes so far, the review once stopped, and whether the chosen maqam is meant. */
+    val freeOn: Boolean = false,
+    val freeNotes: List<HeardNote> = emptyList(),
+    val freeReview: FreeReview? = null,
+    val freeInChosen: Boolean = true,
     val maqam: Maqam = Maqamat.all.first(),
     val length: TaqsimLength = TaqsimLength.Medium,
     val tempo: TaqsimTempo = TaqsimTempo.Normal,
@@ -225,11 +231,40 @@ class TaqsimViewModel : ViewModel() {
     fun restartRepeat() = _state.value.drillPhrase?.let(::startRepeat)
     fun stopRepeat() = _state.update { it.copy(exercise = null, drillPhrase = null) }
 
+    // --- Free mode: you play, the app follows and reviews. ---
+
+    fun startFree() {
+        stop()
+        collector = NoteCollector(_state.value.a4.toDouble())
+        ignoreMicUntil = 0
+        _state.update { it.copy(freeOn = true, freeNotes = emptyList(), freeReview = null, live = true) }
+    }
+
+    /** Stops listening and reviews what was played. */
+    fun stopFree() {
+        val notes = collector?.finish().orEmpty()
+        collector = null
+        val s = _state.value
+        _state.update { it.copy(freeOn = false, freeNotes = notes, freeReview = FreePlay.review(notes, if (s.freeInChosen) s.maqam else null)) }
+    }
+
+    fun setFreeInChosen(inChosen: Boolean) = _state.update {
+        val next = inChosen
+        val review = if (!it.freeOn && it.freeNotes.isNotEmpty()) FreePlay.review(it.freeNotes, if (next) it.maqam else null) else it.freeReview
+        it.copy(freeInChosen = next, freeReview = review)
+    }
+
     // --- Answer mode: the app asks, the player answers. ---
 
     fun setMode(mode: TaqsimMode) {
         stop()
-        _state.update { it.copy(mode = mode, exercise = null, drillPhrase = null, phase = AnswerPhase.Idle, verdict = null, answerNotes = emptyList()) }
+        collector = null
+        _state.update {
+            it.copy(
+                mode = mode, exercise = null, drillPhrase = null, phase = AnswerPhase.Idle, verdict = null, answerNotes = emptyList(),
+                freeOn = false,
+            )
+        }
         if (mode == TaqsimMode.Answer) nextQuestion(play = false)
     }
 
@@ -347,6 +382,15 @@ class TaqsimViewModel : ViewModel() {
         }
         if (update.lost) _state.update { it.copy(frequency = null) }
         update.frequency?.let { f -> _state.update { it.copy(frequency = f) } }
+        // Free mode: every note goes to the collector until it is stopped.
+        val free = collector
+        if (s.mode == TaqsimMode.Free && s.freeOn && free != null) {
+            if (update.pluck) free.pluck()
+            update.steady?.let { free.steady(it, now) }
+            if (update.lost) free.silence()
+            if (free.notes.size != s.freeNotes.size) _state.update { it.copy(freeNotes = free.notes) }
+            return
+        }
         // Answer mode: gather the notes played; a pause of [END_PAUSE_MS] ends the answer.
         val c = collector
         if (s.phase == AnswerPhase.Listening && c != null) {
