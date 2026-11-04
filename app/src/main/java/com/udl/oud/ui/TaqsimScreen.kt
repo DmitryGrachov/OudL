@@ -30,7 +30,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -187,6 +189,8 @@ private fun MaqamPicker(state: TaqsimUiState, vm: TaqsimViewModel) {
 
 @Composable
 private fun TaqsimControls(state: TaqsimUiState, vm: TaqsimViewModel) {
+    var showScore by remember { mutableStateOf(false) }
+    if (showScore) TaqsimScoreDialog(state, vm) { showScore = false }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (state.playing) {
             Button(onClick = vm::stop) { Text("■ Стоп") }
@@ -194,6 +198,7 @@ private fun TaqsimControls(state: TaqsimUiState, vm: TaqsimViewModel) {
             Button(onClick = vm::playAll) { Text("▶ Слушать таксим") }
         }
         TextButton(onClick = vm::regenerate) { Text("✨ Новый таксим") }
+        TextButton(onClick = { showScore = true }) { Text("🎼 Ноты") }
         Text("·", Modifier.align(Alignment.CenterVertically), color = MaterialTheme.colorScheme.outline)
         TaqsimLength.entries.forEach { l ->
             FilterChip(state.length == l, onClick = { vm.setLength(l) }, label = { Text(l.title) })

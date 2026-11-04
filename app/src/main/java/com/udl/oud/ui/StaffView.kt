@@ -14,6 +14,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.text.TextMeasurer
@@ -25,6 +26,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.udl.oud.fretboard.Accidental
 import com.udl.oud.fretboard.StaffNote
+import com.udl.oud.taqsim.NoteValue
 
 /**
  * A treble staff with one note on it — what is sounding, asked for or heard — and its name
@@ -114,7 +116,7 @@ private fun DrawScope.drawStaff(note: StaffNote?, color: Color, lineColor: Color
     drawAccidental(note, Offset(x - h * 3.4f, cy), h, color, stroke, measurer)
 }
 
-private fun DrawScope.drawAccidental(note: StaffNote, at: Offset, h: Float, color: Color, stroke: Float, measurer: TextMeasurer) {
+internal fun DrawScope.drawAccidental(note: StaffNote, at: Offset, h: Float, color: Color, stroke: Float, measurer: TextMeasurer) {
     fun glyph(text: String, mirrored: Boolean = false, raise: Float = 0f) {
         val g = measurer.measure(text, TextStyle(fontSize = (h * 4.2f).toSp(), color = color))
         val topLeft = Offset(at.x - g.size.width / 2f, at.y - g.size.height / 2f - raise)
@@ -146,5 +148,41 @@ private fun DrawScope.drawAccidental(note: StaffNote, at: Offset, h: Float, colo
                 )
             }
         }
+    }
+}
+
+/** Treble clef at [left] with its curl on the G line [yG]; [octaveClef] adds the 8 below. */
+internal fun DrawScope.drawClef(left: Float, yG: Float, h: Float, color: Color, octaveClef: Boolean, measurer: TextMeasurer) {
+    val clef = measurer.measure("𝄞", TextStyle(fontSize = (h * 6.6f).toSp(), color = color))
+    drawText(clef, topLeft = Offset(left + h * 0.2f, yG - clef.size.height * 0.64f))
+    if (octaveClef) {
+        val eight = measurer.measure("8", TextStyle(fontSize = (h * 1.6f).toSp(), color = color, fontWeight = FontWeight.Bold))
+        drawText(eight, topLeft = Offset(left + h * 1.6f, yG + h * 5 - eight.size.height / 2f))
+    }
+}
+
+/**
+ * A note head at ([x], [cy]) of [value], tilted as engraved: hollow for whole and half notes,
+ * a stem for all but the whole, a flag on an eighth. Stems go up below the middle line.
+ */
+internal fun DrawScope.drawNoteHead(x: Float, cy: Float, h: Float, value: NoteValue, stemUp: Boolean, color: Color, stroke: Float) {
+    val head = Size(h * 2.6f, h * 1.85f)
+    val hollow = value == NoteValue.Whole || value == NoteValue.Half
+    rotate(-20f, pivot = Offset(x, cy)) {
+        drawOval(
+            color,
+            topLeft = Offset(x - head.width / 2, cy - head.height / 2),
+            size = head,
+            style = if (hollow) Stroke(stroke * 2.2f) else androidx.compose.ui.graphics.drawscope.Fill,
+        )
+    }
+    if (value == NoteValue.Whole) return
+    val stemX = if (stemUp) x + head.width / 2 - stroke else x - head.width / 2 + stroke
+    val stemEnd = if (stemUp) cy - h * 7 else cy + h * 7
+    drawLine(color, Offset(stemX, cy), Offset(stemX, stemEnd), stroke * 1.4f)
+    if (value == NoteValue.Eighth) {
+        // A single flag curving away from the stem's end.
+        val dir = if (stemUp) 1f else -1f
+        drawLine(color, Offset(stemX, stemEnd), Offset(stemX + h * 1.6f, stemEnd + dir * h * 2.6f), stroke * 2f)
     }
 }
