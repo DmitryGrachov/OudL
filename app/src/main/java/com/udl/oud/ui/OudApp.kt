@@ -25,6 +25,7 @@ private enum class Destination(val title: String, val glyph: String) {
     Maqamat("Макамы", "♮"),
     Taqsim("Таксим", "✦"),
     Scales("Гаммы", "♯"),
+    Ear("Слух", "◐"),
     Practice("Практика", "◉"), // drone and rhythm; the full name doesn't fit the rail
     Metronome("Метроном", "♩"),
 }
@@ -40,6 +41,7 @@ fun OudApp() {
             Destination.Maqamat -> MaqamRoute()
             Destination.Taqsim -> TaqsimRoute()
             Destination.Scales -> WesternScaleRoute()
+            Destination.Ear -> EarRoute()
             Destination.Practice -> PracticeRoute()
             Destination.Metronome -> MetronomeRoute()
         }
