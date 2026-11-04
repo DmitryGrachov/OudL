@@ -1,12 +1,11 @@
 package com.udl.oud.fretboard
 
 import android.Manifest
-import android.os.SystemClock
 import androidx.annotation.RequiresPermission
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.udl.oud.audio.MicPitchSource
-import com.udl.oud.audio.PitchReading
+import com.udl.oud.audio.DrillTaker
+import com.udl.oud.audio.MicListener
 import com.udl.oud.audio.PitchTracker
 import com.udl.oud.audio.ReferenceTone
 import com.udl.oud.tuner.OudSettings
@@ -16,12 +15,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 
 /** A maqam on a tonic, kept to come back to after a modulation. */
 data class SayrStop(val scale: Scale, val tonic: Int)
@@ -108,15 +105,22 @@ class FretboardViewModel : ViewModel() {
     private val _state = MutableStateFlow(FretboardUiState())
     val state = _state.asStateFlow()
 
-    private val mic = MicPitchSource()
+    private val mic = MicListener(
+        viewModelScope,
+        resolve = { p ->
+            val s = _state.value
+            val target = s.exercise?.target?.let { Pitch(it).frequency(s.a4.toDouble()) }
+            // A drill knows which note is due, so the octave question has a sure answer.
+            if (target != null) MicListener.towards { target }(p)
+            else Fretboard.resolveOctave(s.tuning, p.frequency.toDouble(), p.canBeOctaveLower, s.a4.toDouble(), s.onlyCourse, s.maxCents)
+        },
+        onError = { e -> _state.update { it.copy(error = e) } },
+        onUpdate = ::onUpdate,
+    )
     private val tone = ReferenceTone()
-    private val tracker = PitchTracker()
-    private var listenJob: Job? = null
     private var scaleJob: Job? = null
     @Volatile private var playRun = 0
-    private var ignoreMicUntil = 0L
-    private val steady = SteadyNote()
-    private var awaitingPluck = false
+    private val drill = DrillTaker()
 
     init {
         viewModelScope.launch {
@@ -130,19 +134,13 @@ class FretboardViewModel : ViewModel() {
 
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     fun start() {
-        if (listenJob?.isActive == true || !_state.value.live) return
+        if (!_state.value.live) return
         _state.update { it.copy(error = null) }
-        listenJob = viewModelScope.launch {
-            mic.readings()
-                .catch { e -> _state.update { it.copy(error = e.message ?: "Ошибка микрофона") } }
-                .collect(::onReading)
-        }
+        mic.start()
     }
 
     fun stop() {
-        listenJob?.cancel()
-        listenJob = null
-        tracker.reset()
+        mic.stop()
         _state.update { it.copy(frequency = null) }
     }
 
@@ -250,8 +248,7 @@ class FretboardViewModel : ViewModel() {
 
     /** Drills need the mic, so starting one turns it on. */
     private fun beginDrill(drill: Drill) {
-        steady.reset()
-        awaitingPluck = false
+        this.drill.reset()
         _state.update { it.copy(exercise = drill, live = true) }
     }
 
@@ -274,8 +271,7 @@ class FretboardViewModel : ViewModel() {
         val a4 = _state.value.a4.toDouble()
         val rings = noteMs.map { toneMs ?: (it * 1.4).toLong().coerceAtLeast(MIN_TONE_MS) }
         // Don't light up the speaker's own tone as if it were played on the oud.
-        ignoreMicUntil = SystemClock.elapsedRealtime() + noteMs.sum() + rings.last()
-        tracker.reset()
+        mic.quietFor(noteMs.sum() + rings.last())
         _state.update { it.copy(frequency = null) }
         scaleJob?.cancel()
         // A cancelled run must not clear the highlight of the run that replaced it.
@@ -303,37 +299,13 @@ class FretboardViewModel : ViewModel() {
     fun play(position: Position) =
         playSequence(listOf(position.pitch.step), SINGLE_NOTE_MS, ReferenceTone.DURATION_MS.toLong())
 
-    private fun onReading(reading: PitchReading) {
-        val now = SystemClock.elapsedRealtime()
-        if (now < ignoreMicUntil) return
+    private fun onUpdate(update: PitchTracker.Update, now: Long) {
         val s = _state.value
-        val targetFrequency = s.exercise?.target?.let { Pitch(it).frequency(s.a4.toDouble()) }
-        val update = tracker.update(reading, now) {
-            val f = it.frequency.toDouble()
-            if (targetFrequency != null) {
-                // The drill knows which note is due, so the octave question has a sure answer.
-                if (it.canBeOctaveLower && abs(centsBetween(f / 2, targetFrequency)) < abs(centsBetween(f, targetFrequency))) {
-                    f / 2
-                } else {
-                    f
-                }
-            } else {
-                Fretboard.resolveOctave(s.tuning, f, it.canBeOctaveLower, s.a4.toDouble(), s.onlyCourse, s.maxCents)
-            }
-        }
         if (update.lost) _state.update { it.copy(frequency = null) }
         update.frequency?.let { f -> _state.update { it.copy(frequency = f) } }
-
-        if (update.pluck) {
-            awaitingPluck = false
-            steady.reset()
-        }
         // After a note is taken it keeps ringing; only a new pluck may count for the next one.
-        if (targetFrequency == null || awaitingPluck) return
-        val f = update.steady ?: return
-        steady.add(centsBetween(f, targetFrequency))?.let { cents ->
+        drill.feed(update, s.exercise?.target?.let { Pitch(it).frequency(s.a4.toDouble()) })?.let { cents ->
             _state.update { it.copy(exercise = it.exercise?.record(cents)) }
-            awaitingPluck = true
         }
     }
 

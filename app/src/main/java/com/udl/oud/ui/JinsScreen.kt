@@ -2,8 +2,6 @@
 
 package com.udl.oud.ui
 
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -26,28 +24,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.udl.oud.fretboard.Fretboard
 import com.udl.oud.fretboard.Maqam
 import com.udl.oud.fretboard.NoteLabels
 import com.udl.oud.fretboard.Pitch
@@ -63,8 +52,6 @@ import com.udl.oud.taqsim.JinsGrammars
 import com.udl.oud.taqsim.Motif
 import com.udl.oud.ui.theme.InTuneGreen
 import kotlin.math.abs
-import kotlin.math.hypot
-import kotlin.math.log2
 import kotlin.math.roundToInt
 
 /**
@@ -320,77 +307,30 @@ private fun MotifDrillBar(state: JinsUiState, vm: JinsViewModel) {
     }
 }
 
-/** One place of a degree on the neck: course, cents above the open string, degree, frequency. */
-private data class JinsDot(val course: Int, val cents: Double, val degree: Int, val hz: Double)
-
-/**
- * The neck with the jins: its notes bold, the colour note in its own colour, the notes around it
- * faint. Dots are placed by frequency, so quarter tones sit where they are played.
- */
+/** The neck with the jins: its notes bold, the colour note in its own colour, the notes around it faint. A tap plays the note. */
 @Composable
 private fun JinsBoard(state: JinsUiState, vm: JinsViewModel, modifier: Modifier) {
-    val measurer = rememberTextMeasurer()
-    val maxCents = Fretboard.NECK_CENTS
     val top = state.intervals.size
     val station = state.station
-    val a4 = state.a4.toDouble()
-    val dots = remember(station, state.tuning, a4, state.pitchScale) {
-        state.tuning.courses.flatMapIndexed { course, open ->
-            val openHz = open.frequency(a4)
-            (-10..17).mapNotNull { d ->
-                val hz = station.hz(d) * state.pitchScale
-                var cents = 1200 * log2(hz / openHz)
-                if (abs(cents) < 12) cents = 0.0
-                if (cents < 0 || cents > maxCents) null else JinsDot(course, cents, d, hz)
+    val notes = remember(station, state.pitchScale) {
+        (-10..17).map { d ->
+            val k = Math.floorMod(d, 7)
+            val style = when {
+                k !in 0..top -> DotStyle.Faint
+                k in state.grammar.characteristic -> DotStyle.Colour
+                else -> DotStyle.Scale
             }
+            BoardNote(station.hz(d) * state.pitchScale, state.name(d), style, ring = k == 0, degree = d)
         }
     }
-    val heardHz = state.frequency
-    val heardInTune = state.heardDegree?.let { abs(it.second) <= JinsUiState.IN_TUNE_CENTS } ?: false
-    val colors = boardColors(if (heardInTune) InTuneGreen else MaterialTheme.colorScheme.tertiary)
-    val colourFill = MaterialTheme.colorScheme.tertiary
-    val litHz = (state.playing ?: state.target)?.let(state::hz)
-    fun near(a: Double, b: Double, cents: Double) = abs(1200 * log2(a / b)) <= cents
-    Canvas(
-        modifier.pointerInput(dots, state.tuning) {
-            detectTapGestures { tap ->
-                val g = BoardGeometry(Size(size.width.toFloat(), size.height.toFloat()), state.tuning.courses.size, true, maxCents, this)
-                fun dist(p: JinsDot) = hypot(g.x(p.cents) - tap.x, g.y(p.course) - tap.y)
-                dots.minByOrNull(::dist)?.takeIf { dist(it) <= 30.dp.toPx() }?.let { vm.playNote(it.degree) }
-            }
-        },
-    ) {
-        val g = BoardGeometry(size, state.tuning.courses.size, true, maxCents, this)
-        drawBoard(g, colors, measurer)
-        dots.forEach { p ->
-            val k = Math.floorMod(p.degree, 7)
-            val inJins = k in 0..top
-            val center = Offset(g.x(p.cents), g.y(p.course))
-            val radius = (if (inJins) 14.dp else 9.dp).toPx() * g.dotScale
-            val highlight = when {
-                litHz != null && near(p.hz, litHz, 5.0) -> colors.playing
-                heardHz != null && near(p.hz, heardHz, 35.0) -> colors.heard
-                else -> null
-            }
-            if (highlight != null) drawCircle(highlight.copy(alpha = 0.3f), radius = radius + 12.dp.toPx() * g.dotScale, center = center)
-            val fill = when {
-                highlight != null -> highlight
-                !inJins -> colors.accidental // the notes around the jins, muted
-                k in state.grammar.characteristic -> colourFill
-                else -> colors.natural
-            }
-            drawCircle(fill, radius = radius, center = center)
-            if (p.cents == 0.0) drawCircle(colors.nut, radius = radius, center = center, style = Stroke(2.dp.toPx()))
-            if (k == 0) {
-                drawCircle(colors.label, radius = radius + 4.dp.toPx() * g.dotScale, center = center, style = Stroke(3.dp.toPx() * g.dotScale))
-            }
-            val label = measurer.measure(
-                state.name(p.degree),
-                TextStyle(fontSize = (if (inJins) 11.sp else 9.sp) * g.dotScale, fontWeight = FontWeight.SemiBold, color = highlight ?: colors.label),
-            )
-            drawText(label, topLeft = Offset(center.x - label.size.width / 2f, center.y + radius + 3.dp.toPx() * g.dotScale))
-        }
-    }
+    ScaleBoard(
+        notes, state.tuning, state.a4.toDouble(),
+        litHz = (state.playing ?: state.target)?.let(state::hz),
+        heardHz = state.frequency,
+        heardInTune = state.heardDegree?.let { abs(it.second) <= JinsUiState.IN_TUNE_CENTS } ?: false,
+        modifier = modifier,
+        onTap = { vm.playNote(it.degree) },
+    )
 }
 
 @Composable
@@ -478,39 +418,16 @@ private fun JinsAnswerPanel(state: JinsUiState, vm: JinsViewModel) {
             style = MaterialTheme.typography.bodyMedium,
             color = muted,
         )
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            when {
-                state.phase == AnswerPhase.Question -> androidx.compose.material3.Button(onClick = vm::stop) { Text("■ Стоп") }
-                state.phase == AnswerPhase.Listening -> androidx.compose.material3.Button(onClick = vm::finishAnswer) { Text("✋ Готово") }
-                else -> androidx.compose.material3.Button(onClick = vm::playQuestion) {
-                    Text(if (state.phase == AnswerPhase.Idle) "▶ Задать вопрос" else "▶ Вопрос ещё раз")
-                }
-            }
+        AnswerControls(
+            state.phase, state.phase == AnswerPhase.Question, "▶ Задать вопрос", "▶ Вопрос ещё раз",
+            vm::stop, vm::finishAnswer, vm::playQuestion,
+        ) {
             TextButton(onClick = vm::playExample) { Text("💡 Пример ответа") }
             TextButton(onClick = vm::newEtude) { Text("➡ Другой вопрос") }
         }
         if (state.phase == AnswerPhase.Listening) {
             Text("Твоя очередь: играй ответ — после паузы я его разберу.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleSmall)
         }
-        if (state.answerNotes.isNotEmpty()) {
-            Text(
-                buildAnnotatedString {
-                    state.answerNotes.forEachIndexed { i, n ->
-                        val outside = state.verdict?.outside?.contains(i) ?: false
-                        withStyle(SpanStyle(color = if (outside) MaterialTheme.colorScheme.tertiary else InTuneGreen, fontWeight = FontWeight.SemiBold)) {
-                            append(" ${state.playedName(n)} ")
-                        }
-                    }
-                },
-                style = MaterialTheme.typography.titleLarge,
-            )
-        }
-        state.verdict?.points?.forEach { p ->
-            Text(
-                "${if (p.passed) "✓" else "✗"}  ${p.text}",
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (p.passed) InTuneGreen else MaterialTheme.colorScheme.tertiary,
-            )
-        }
+        AnswerResult(state.answerNotes, state.verdict, state::playedName)
     }
 }

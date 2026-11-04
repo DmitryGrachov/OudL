@@ -2,7 +2,6 @@
 
 package com.udl.oud.ui
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -28,30 +27,23 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.udl.oud.fretboard.Fretboard
 import com.udl.oud.fretboard.Maqamat
 import com.udl.oud.fretboard.NoteLabels
 import com.udl.oud.fretboard.Pitch
@@ -71,7 +63,6 @@ import com.udl.oud.taqsim.TaqsimUiState
 import com.udl.oud.taqsim.TaqsimViewModel
 import com.udl.oud.ui.theme.InTuneGreen
 import kotlin.math.abs
-import kotlin.math.log2
 import kotlin.math.roundToInt
 
 /** The taqsim tab: a study improvisation on the chosen maqam, built by the rules of its sayr. */
@@ -361,65 +352,29 @@ private fun RepeatBar(state: TaqsimUiState, vm: TaqsimViewModel) {
     }
 }
 
-/** One place of a station's degree on the neck: course, cents above the open string, degree. */
-private data class BoardDot(val course: Int, val cents: Double, val degree: Int, val hz: Double)
-
-/**
- * The neck with the station's scale, placed by frequency so quarter tones sit where they are
- * played; the note sounding, asked for or heard is lit.
- */
+/** The neck with the station's scale, its jins in colour; the note sounding, asked for or heard is lit. */
 @Composable
 private fun TaqsimBoard(state: TaqsimUiState, modifier: Modifier) {
-    val measurer = rememberTextMeasurer()
-    val maxCents = Fretboard.NECK_CENTS
     // In free mode the board shows the maqam itself from its tonic; otherwise the phrase's station.
-    val station: Station = when {
-        state.mode != TaqsimMode.Free -> state.taqsim.phrases[state.shownPhrase].station
-        else -> com.udl.oud.taqsim.TaqsimSayrs.Stations(state.maqam, state.maqam.tonic).qafla
-    }
-    val a4 = state.a4.toDouble()
-    val dots = remember(station, state.tuning, a4, state.pitchScale) {
-        state.tuning.courses.flatMapIndexed { course, open ->
-            val openHz = open.frequency(a4)
-            (-10..17).mapNotNull { d ->
-                val hz = station.hz(d) * state.pitchScale
-                var cents = 1200 * log2(hz / openHz)
-                if (abs(cents) < 12) cents = 0.0
-                if (cents < 0 || cents > maxCents) null else BoardDot(course, cents, d, hz)
-            }
-        }
-    }
-    val heardHz = state.frequency?.takeIf { state.heard != null }
-    val heardInTune = state.heard?.let { abs(it.second) <= TaqsimUiState.IN_TUNE_CENTS } ?: false
-    val colors = boardColors(if (heardInTune) InTuneGreen else MaterialTheme.colorScheme.tertiary)
-    val litHz = (state.playingTone ?: state.target)?.hz?.times(state.pitchScale)
-    val jinsDegrees = remember(station) { station.jinsDegrees.map { Math.floorMod(it, 7) }.toSet() }
-    fun near(a: Double, b: Double, cents: Double) = abs(1200 * log2(a / b)) <= cents
-    Canvas(modifier) {
-        val g = BoardGeometry(size, state.tuning.courses.size, true, maxCents, this)
-        drawBoard(g, colors, measurer)
-        dots.forEach { p ->
-            val center = Offset(g.x(p.cents), g.y(p.course))
-            val radius = 13.dp.toPx() * g.dotScale
-            val highlight = when {
-                litHz != null && near(p.hz, litHz, 5.0) -> colors.playing
-                heardHz != null && near(p.hz, heardHz, 35.0) -> colors.heard
-                else -> null
-            }
-            if (highlight != null) drawCircle(highlight.copy(alpha = 0.3f), radius = radius + 12.dp.toPx() * g.dotScale, center = center)
-            val inJins = Math.floorMod(p.degree, 7) in jinsDegrees
-            drawCircle(highlight ?: if (inJins) colors.upperJins else colors.natural, radius = radius, center = center)
-            if (p.cents == 0.0) drawCircle(colors.nut, radius = radius, center = center, style = Stroke(2.dp.toPx()))
-            if (Math.floorMod(p.degree, 7) == Math.floorMod(station.focus, 7)) {
-                drawCircle(colors.label, radius = radius + 4.dp.toPx() * g.dotScale, center = center, style = Stroke(3.dp.toPx() * g.dotScale))
-            }
-            val label = measurer.measure(
-                state.degreeName(station, p.degree),
-                TextStyle(fontSize = 11.sp * g.dotScale, fontWeight = FontWeight.SemiBold, color = highlight ?: colors.label),
+    val station: Station = if (state.mode != TaqsimMode.Free) state.taqsim.phrases[state.shownPhrase].station
+    else com.udl.oud.taqsim.TaqsimSayrs.Stations(state.maqam, state.maqam.tonic).qafla
+    val notes = remember(station, state.pitchScale) {
+        val jins = station.jinsDegrees.map { Math.floorMod(it, 7) }.toSet()
+        (-10..17).map { d ->
+            val k = Math.floorMod(d, 7)
+            BoardNote(
+                station.hz(d) * state.pitchScale, state.degreeName(station, d),
+                if (k in jins) DotStyle.Jins else DotStyle.Scale, ring = k == Math.floorMod(station.focus, 7), degree = d,
             )
-            drawText(label, topLeft = Offset(center.x - label.size.width / 2f, center.y + radius + 3.dp.toPx() * g.dotScale))
         }
     }
+    ScaleBoard(
+        notes, state.tuning, state.a4.toDouble(),
+        litHz = (state.playingTone ?: state.target)?.hz?.times(state.pitchScale),
+        heardHz = state.frequency?.takeIf { state.heard != null },
+        heardInTune = state.heard?.let { abs(it.second) <= TaqsimUiState.IN_TUNE_CENTS } ?: false,
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -478,14 +433,7 @@ private fun AnswerPanel(state: TaqsimUiState, vm: TaqsimViewModel) {
             },
             style = MaterialTheme.typography.titleSmall,
         )
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            when {
-                state.playing -> Button(onClick = vm::stop) { Text("■ Стоп") }
-                state.phase == AnswerPhase.Listening -> Button(onClick = vm::finishAnswer) { Text("✋ Готово") }
-                else -> Button(onClick = vm::playQuestion) {
-                    Text(if (state.phase == AnswerPhase.Idle) "▶ Задать вопрос" else "▶ Вопрос ещё раз")
-                }
-            }
+        AnswerControls(state.phase, state.playing, "▶ Задать вопрос", "▶ Вопрос ещё раз", vm::stop, vm::finishAnswer, vm::playQuestion) {
             TextButton(onClick = vm::playExample, enabled = !state.playing) { Text("💡 Пример ответа") }
             TextButton(onClick = { vm.nextQuestion() }) { Text("➡ Следующий вопрос") }
         }
@@ -500,39 +448,7 @@ private fun AnswerPanel(state: TaqsimUiState, vm: TaqsimViewModel) {
             color = if (state.phase == AnswerPhase.Listening) MaterialTheme.colorScheme.primary else muted,
         )
         // The answer so far, each note green in the maqam, orange outside it.
-        if (state.answerNotes.isNotEmpty()) {
-            val verdict = state.verdict
-            Text(
-                buildAnnotatedString {
-                    state.answerNotes.forEachIndexed { i, n ->
-                        val outside = verdict?.outside?.contains(i) ?: false
-                        withStyle(
-                            SpanStyle(
-                                color = if (outside) MaterialTheme.colorScheme.tertiary else InTuneGreen,
-                                fontWeight = FontWeight.SemiBold,
-                            ),
-                        ) { append(" ${heardName(state, station, n)} ") }
-                    }
-                },
-                style = MaterialTheme.typography.titleLarge,
-            )
-        }
-        state.verdict?.let { v ->
-            v.points.forEach { p ->
-                Text(
-                    "${if (p.passed) "✓" else "✗"}  ${p.text}",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (p.passed) InTuneGreen else MaterialTheme.colorScheme.tertiary,
-                )
-            }
-            if (v.points.size == 4) {
-                Text(
-                    if (v.passed == 4) "Отличный ответ! Попробуй следующий вопрос или ответь иначе." else "${v.passed} из 4. Послушай пример и попробуй ещё раз.",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        }
+        AnswerResult(state.answerNotes, state.verdict, { heardName(state, station, it) }, summary = true)
     }
 }
 

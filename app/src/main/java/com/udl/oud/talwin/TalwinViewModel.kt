@@ -1,15 +1,11 @@
 package com.udl.oud.talwin
 
 import android.Manifest
-import android.os.SystemClock
 import androidx.annotation.RequiresPermission
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.udl.oud.audio.MicPitchSource
-import com.udl.oud.audio.PcmPlayer
-import com.udl.oud.audio.PitchReading
+import com.udl.oud.audio.MicListener
 import com.udl.oud.audio.PitchTracker
-import com.udl.oud.audio.PluckSynth
 import com.udl.oud.fretboard.Maqam
 import com.udl.oud.taqsim.AnswerCheck
 import com.udl.oud.taqsim.AnswerPhase
@@ -18,22 +14,17 @@ import com.udl.oud.taqsim.HeardNote
 import com.udl.oud.taqsim.NoteCollector
 import com.udl.oud.taqsim.OrnamentLevel
 import com.udl.oud.taqsim.Ornamenter
+import com.udl.oud.taqsim.PhrasePlayer
 import com.udl.oud.taqsim.SectionKind
 import com.udl.oud.taqsim.Taqsim
-import com.udl.oud.taqsim.TaqsimRenderer
 import com.udl.oud.tuner.OudSettings
 import com.udl.oud.tuner.Tuning
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 enum class TalwinMode(val title: String) {
     Listen("Слушать"),
@@ -79,13 +70,9 @@ class TalwinViewModel : ViewModel() {
     private val _state = MutableStateFlow(TalwinUiState())
     val state = _state.asStateFlow()
 
-    private val synth = PluckSynth(SAMPLE_RATE)
-    private val player = PcmPlayer(SAMPLE_RATE)
-    private val mic = MicPitchSource()
-    private val tracker = PitchTracker()
-    private var listenJob: Job? = null
+    private val sound = PhrasePlayer()
+    private val mic = MicListener(viewModelScope, onError = { e -> _state.update { it.copy(error = e) } }, onUpdate = ::onUpdate)
     private var playJob: Job? = null
-    private var ignoreMicUntil = 0L
     private var collector: NoteCollector? = null
 
     init {
@@ -211,24 +198,11 @@ class TalwinViewModel : ViewModel() {
         val notes = phrases.flatMap { s.taqsim.phrases[it].notes }
         _state.update { it.copy(playing = true) }
         playJob = viewModelScope.launch {
-            val rendered = withContext(Dispatchers.Default) {
-                TaqsimRenderer.render(
-                    synth, s.taqsim, phrases, PULSE_MS, s.a4.toDouble(), s.tuning,
-                    Ornamenter.decorate(s.taqsim, OrnamentLevel.Light), SAMPLE_RATE, s.pitchScale,
-                )
-            }
-            ignoreMicUntil = Long.MAX_VALUE
-            val ticker = launch {
-                while (isActive) {
-                    player.positionMs()?.let { pos ->
-                        val i = rendered.starts.indexOfLast { it <= pos }.takeIf { it >= 0 && pos < rendered.totalMs - rendered.tailMs + 400 }
-                        _state.update { it.copy(playingNote = i?.let { first + it }, playingHz = i?.let { notes[it].hz * s.pitchScale }) }
-                    }
-                    delay(25)
-                }
-            }
-            player.play(rendered.pcm)
-            ticker.cancel()
+            mic.mute()
+            sound.play(
+                s.taqsim, phrases, PULSE_MS, s.a4.toDouble(), s.tuning, Ornamenter.decorate(s.taqsim, OrnamentLevel.Light), s.pitchScale,
+                onNote = { i -> _state.update { it.copy(playingNote = i?.let { first + it }, playingHz = i?.let { notes[it].hz * s.pitchScale }) } },
+            )
             done()
             onFinished?.invoke()
         }
@@ -238,42 +212,26 @@ class TalwinViewModel : ViewModel() {
     private fun playRun(hz440: List<Double>) {
         stop()
         val s = _state.value
-        val lengths = hz440.indices.map { if (it == hz440.lastIndex) 1100.0 else 420.0 }
-        val starts = lengths.runningFold(0.0) { a, l -> a + l }.dropLast(1)
-        val total = starts.last() + lengths.last() + 900
         val hz = hz440.map { it * s.pitchScale }
         _state.update { it.copy(playing = true) }
         playJob = viewModelScope.launch {
-            val pcm = withContext(Dispatchers.Default) {
-                val plucks = hz.indices.map { i -> PluckSynth.Pluck(hz[i], (starts[i] * SAMPLE_RATE / 1000).toInt(), (lengths[i] * SAMPLE_RATE / 1000).toInt()) }
-                PluckSynth.toPcm(synth.render(plucks, (total * SAMPLE_RATE / 1000).toInt()))
+            mic.mute()
+            sound.playTones(hz, hz.indices.map { if (it == hz.lastIndex) 1100.0 else 420.0 }) { i ->
+                _state.update { it.copy(playingHz = i?.let(hz::get)) }
             }
-            ignoreMicUntil = Long.MAX_VALUE
-            val ticker = launch {
-                while (isActive) {
-                    player.positionMs()?.let { pos ->
-                        val i = starts.indexOfLast { it <= pos }
-                        _state.update { it.copy(playingHz = hz.getOrNull(i)?.takeIf { pos < total - 600 }) }
-                    }
-                    delay(25)
-                }
-            }
-            player.play(pcm)
-            ticker.cancel()
             done()
         }
     }
 
     private fun done() {
-        ignoreMicUntil = SystemClock.elapsedRealtime() + MIC_GRACE_MS
-        tracker.reset()
+        mic.unmute()
         _state.update { it.copy(playingNote = null, playingHz = null, playing = false) }
     }
 
     fun stop() {
         playJob?.cancel()
         playJob = null
-        ignoreMicUntil = SystemClock.elapsedRealtime() + MIC_GRACE_MS
+        mic.unmute()
         _state.update { it.copy(playingNote = null, playingHz = null, playing = false) }
     }
 
@@ -281,19 +239,13 @@ class TalwinViewModel : ViewModel() {
 
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     fun start() {
-        if (listenJob?.isActive == true || !_state.value.live) return
+        if (!_state.value.live) return
         _state.update { it.copy(error = null) }
-        listenJob = viewModelScope.launch {
-            mic.readings()
-                .catch { e -> _state.update { it.copy(error = e.message ?: "Ошибка микрофона") } }
-                .collect(::onReading)
-        }
+        mic.start()
     }
 
     fun stopListening() {
-        listenJob?.cancel()
-        listenJob = null
-        tracker.reset()
+        mic.stop()
         _state.update { it.copy(frequency = null) }
     }
 
@@ -302,20 +254,15 @@ class TalwinViewModel : ViewModel() {
         if (!live) stopListening()
     }
 
-    private fun onReading(reading: PitchReading) {
-        val now = SystemClock.elapsedRealtime()
-        if (now < ignoreMicUntil) return
+    private fun onUpdate(update: PitchTracker.Update, now: Long) {
         val s = _state.value
-        val update = tracker.update(reading, now) { it.frequency.toDouble() }
         if (update.lost) _state.update { it.copy(frequency = null) }
         update.frequency?.let { f -> _state.update { it.copy(frequency = f) } }
         val c = collector
         if (s.phase == AnswerPhase.Listening && c != null) {
-            if (update.pluck) c.pluck()
-            update.steady?.let { c.steady(it, now) }
-            if (update.lost) c.silence()
+            c.feed(update, now)
             if (c.notes.size != s.answerNotes.size) _state.update { it.copy(answerNotes = c.notes) }
-            if (c.notes.size >= 2 && now - c.lastSoundAt > END_PAUSE_MS) finishAnswer()
+            if (c.ended(now)) finishAnswer()
         }
     }
 
@@ -324,9 +271,6 @@ class TalwinViewModel : ViewModel() {
     }
 
     private companion object {
-        const val SAMPLE_RATE = 44100
         const val PULSE_MS = 200.0
-        const val MIC_GRACE_MS = 600L
-        const val END_PAUSE_MS = 2200L
     }
 }

@@ -40,6 +40,16 @@ class NoteCollector(
 
     fun silence() = close()
 
+    /** Takes one update from the microphone: a pluck or silence ends a note, a steady pitch adds to it. */
+    fun feed(update: com.udl.oud.audio.PitchTracker.Update, now: Long) {
+        if (update.pluck) pluck()
+        update.steady?.let { steady(it, now) }
+        if (update.lost) silence()
+    }
+
+    /** The answer is over: a couple of real notes, then a pause of [pauseMs] (a stray sound in a quiet room is not an answer). */
+    fun ended(now: Long, pauseMs: Long = END_PAUSE_MS): Boolean = done.size >= 2 && now - lastSoundAt > pauseMs
+
     /** Closes the note still sounding and returns everything played. */
     fun finish(): List<HeardNote> {
         close()
@@ -57,6 +67,9 @@ class NoteCollector(
     private companion object {
         /** About how long one reading covers (the mic's hop). */
         const val READING_MS = 23L
+
+        /** The pause that ends an answer. */
+        const val END_PAUSE_MS = 2200L
     }
 
     private fun close() {

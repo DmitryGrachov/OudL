@@ -1,35 +1,25 @@
 package com.udl.oud.taqsim
 
 import android.Manifest
-import android.os.SystemClock
 import androidx.annotation.RequiresPermission
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.udl.oud.audio.MicPitchSource
-import com.udl.oud.audio.PcmPlayer
-import com.udl.oud.audio.PitchReading
+import com.udl.oud.audio.DrillTaker
+import com.udl.oud.audio.MicListener
 import com.udl.oud.audio.PitchTracker
-import com.udl.oud.audio.PluckSynth
 import com.udl.oud.fretboard.Drill
 import com.udl.oud.fretboard.Maqam
 import com.udl.oud.fretboard.Maqamat
 import com.udl.oud.fretboard.Pitch
-import com.udl.oud.fretboard.SteadyNote
 import com.udl.oud.tuner.OudSettings
 import com.udl.oud.tuner.Tuning
 import com.udl.oud.tuner.centsBetween
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlin.math.abs
 
 /** Playback speed: how long the base pulse lasts. */
 enum class TaqsimTempo(val title: String, val pulseMs: Double) {
@@ -143,15 +133,15 @@ class TaqsimViewModel : ViewModel() {
     private val _state = MutableStateFlow(TaqsimUiState())
     val state = _state.asStateFlow()
 
-    private val synth = PluckSynth(SAMPLE_RATE)
-    private val player = PcmPlayer(SAMPLE_RATE)
-    private val mic = MicPitchSource()
-    private val tracker = PitchTracker()
-    private val steady = SteadyNote()
-    private var listenJob: Job? = null
+    private val sound = PhrasePlayer()
+    private val mic = MicListener(
+        viewModelScope,
+        resolve = MicListener.towards { _state.value.let { s -> s.target?.let { it.hz * s.pitchScale } } },
+        onError = { e -> _state.update { it.copy(error = e) } },
+        onUpdate = ::onUpdate,
+    )
+    private val drill = DrillTaker()
     private var playJob: Job? = null
-    private var ignoreMicUntil = 0L
-    private var awaitingPluck = false
 
     init {
         viewModelScope.launch {
@@ -164,19 +154,13 @@ class TaqsimViewModel : ViewModel() {
 
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     fun start() {
-        if (listenJob?.isActive == true || !_state.value.live) return
+        if (!_state.value.live) return
         _state.update { it.copy(error = null) }
-        listenJob = viewModelScope.launch {
-            mic.readings()
-                .catch { e -> _state.update { it.copy(error = e.message ?: "Ошибка микрофона") } }
-                .collect(::onReading)
-        }
+        mic.start()
     }
 
     fun stopListening() {
-        listenJob?.cancel()
-        listenJob = null
-        tracker.reset()
+        mic.stop()
         _state.update { it.copy(frequency = null) }
     }
 
@@ -225,15 +209,14 @@ class TaqsimViewModel : ViewModel() {
         playJob?.cancel()
         playJob = null
         // The speaker's last note still rings for a moment; don't take it for the oud.
-        ignoreMicUntil = SystemClock.elapsedRealtime() + MIC_GRACE_MS
+        mic.unmute()
         _state.update { it.copy(playing = false, playingNote = null) }
     }
 
     /** "Repeat the phrase": the drill goes note by note through it, at the player's own pace. */
     fun startRepeat(index: Int) {
         stop()
-        steady.reset()
-        awaitingPluck = false
+        drill.reset()
         val steps = _state.value.taqsim.phrases[index].notes.map { it.step }
         _state.update { it.copy(exercise = Drill(steps), drillPhrase = index, selected = index, live = true) }
     }
@@ -246,7 +229,7 @@ class TaqsimViewModel : ViewModel() {
     fun startFree() {
         stop()
         collector = NoteCollector(_state.value.a4.toDouble())
-        ignoreMicUntil = 0
+        mic.unmute(graceMs = 0)
         _state.update { it.copy(freeOn = true, freeNotes = emptyList(), freeReview = null, live = true) }
     }
 
@@ -349,91 +332,42 @@ class TaqsimViewModel : ViewModel() {
         val first = s.phraseStarts[phrases.first]
         _state.update { it.copy(playing = true, exercise = null) }
         playJob = viewModelScope.launch {
-            val rendered = withContext(Dispatchers.Default) {
-                TaqsimRenderer.render(synth, s.taqsim, phrases, s.tempo.pulseMs, s.a4.toDouble(), s.tuning, s.ornaments, SAMPLE_RATE, s.pitchScale)
-            }
-            val pcm = rendered.pcm
-            val starts = rendered.starts
-            val totalMs = rendered.totalMs
-            do {
-                ignoreMicUntil = Long.MAX_VALUE
-                val ticker = launch {
-                    while (isActive) {
-                        val pos = player.positionMs()
-                        if (pos != null) {
-                            val i = starts.indexOfLast { it <= pos }.takeIf { it >= 0 && pos < totalMs - TAIL_MS + 400 }
-                            _state.update { it.copy(playingNote = i?.let { first + it }) }
-                        }
-                        delay(TICK_MS)
-                    }
-                }
-                player.play(pcm)
-                ticker.cancel()
-                _state.update { it.copy(playingNote = null) }
-                if (loop && isActive) delay(LOOP_PAUSE_MS)
-            } while (loop && isActive && _state.value.loop)
-            ignoreMicUntil = SystemClock.elapsedRealtime() + MIC_GRACE_MS
-            tracker.reset()
+            mic.mute()
+            sound.play(
+                s.taqsim, phrases, s.tempo.pulseMs, s.a4.toDouble(), s.tuning, s.ornaments, s.pitchScale,
+                onNote = { i -> _state.update { it.copy(playingNote = i?.let { first + it }) } },
+                loop = { loop && _state.value.loop },
+            )
+            mic.unmute()
             _state.update { it.copy(playing = false, playingNote = null) }
             onFinished?.invoke()
         }
     }
 
-    private fun onReading(reading: PitchReading) {
-        val now = SystemClock.elapsedRealtime()
-        if (now < ignoreMicUntil) return
+    private fun onUpdate(update: PitchTracker.Update, now: Long) {
         val s = _state.value
-        val targetFrequency = s.target?.let { it.hz * s.pitchScale }
-        val update = tracker.update(reading, now) {
-            val f = it.frequency.toDouble()
-            if (targetFrequency != null && it.canBeOctaveLower &&
-                abs(centsBetween(f / 2, targetFrequency)) < abs(centsBetween(f, targetFrequency))
-            ) f / 2 else f
-        }
         if (update.lost) _state.update { it.copy(frequency = null) }
         update.frequency?.let { f -> _state.update { it.copy(frequency = f) } }
         // Free mode: every note goes to the collector until it is stopped.
-        val free = collector
-        if (s.mode == TaqsimMode.Free && s.freeOn && free != null) {
-            if (update.pluck) free.pluck()
-            update.steady?.let { free.steady(it, now) }
-            if (update.lost) free.silence()
-            if (free.notes.size != s.freeNotes.size) _state.update { it.copy(freeNotes = free.notes) }
-            return
-        }
-        // Answer mode: gather the notes played; a pause of [END_PAUSE_MS] ends the answer.
         val c = collector
-        if (s.phase == AnswerPhase.Listening && c != null) {
-            if (update.pluck) c.pluck()
-            update.steady?.let { c.steady(it, now) }
-            if (update.lost) c.silence()
-            if (c.notes.size != s.answerNotes.size) _state.update { it.copy(answerNotes = c.notes) }
-            // A stray sound in a quiet room is not an answer: wait for a couple of real notes first.
-            if (c.notes.size >= 2 && now - c.lastSoundAt > END_PAUSE_MS) finishAnswer()
+        if (s.mode == TaqsimMode.Free && s.freeOn && c != null) {
+            c.feed(update, now)
+            if (c.notes.size != s.freeNotes.size) _state.update { it.copy(freeNotes = c.notes) }
             return
         }
-        if (update.pluck) {
-            awaitingPluck = false
-            steady.reset()
+        // Answer mode: gather the notes played; a pause ends the answer.
+        if (s.phase == AnswerPhase.Listening && c != null) {
+            c.feed(update, now)
+            if (c.notes.size != s.answerNotes.size) _state.update { it.copy(answerNotes = c.notes) }
+            if (c.ended(now)) finishAnswer()
+            return
         }
-        if (targetFrequency == null || awaitingPluck) return
-        val f = update.steady ?: return
-        steady.add(centsBetween(f, targetFrequency))?.let { cents ->
+        drill.feed(update, s.target?.let { it.hz * s.pitchScale })?.let { cents ->
             _state.update { it.copy(exercise = it.exercise?.record(cents)) }
-            awaitingPluck = true
         }
     }
 
     override fun onCleared() {
         playJob?.cancel()
-    }
-
-    private companion object {
-        const val SAMPLE_RATE = 44100
-        const val TICK_MS = 25L
-        const val TAIL_MS = 1200.0
-        const val LOOP_PAUSE_MS = 900L
-        const val MIC_GRACE_MS = 600L
-        const val END_PAUSE_MS = 2200L
     }
 }

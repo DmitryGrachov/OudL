@@ -2,7 +2,6 @@
 
 package com.udl.oud.ui
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -26,26 +25,20 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.udl.oud.fretboard.Fretboard
 import com.udl.oud.fretboard.Maqamat
 import com.udl.oud.fretboard.NoteLabels
 import com.udl.oud.fretboard.Pitch
@@ -57,8 +50,6 @@ import com.udl.oud.talwin.TalwinMode
 import com.udl.oud.talwin.TalwinUiState
 import com.udl.oud.talwin.TalwinViewModel
 import com.udl.oud.ui.theme.InTuneGreen
-import kotlin.math.abs
-import kotlin.math.log2
 
 /** The talwin mode of the maqam tab: modulations, what they change, and practice in them. */
 @Composable
@@ -236,38 +227,17 @@ private fun AnswerPanel(state: TalwinUiState, vm: TalwinViewModel) {
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
         )
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            when {
-                state.phase == AnswerPhase.Question -> Button(onClick = vm::stop) { Text("■ Стоп") }
-                state.phase == AnswerPhase.Listening -> Button(onClick = vm::finishAnswer) { Text("✋ Готово") }
-                else -> Button(onClick = vm::playQuestion) { Text(if (state.phase == AnswerPhase.Idle) "▶ Подвести к переходу" else "▶ Ещё раз") }
-            }
+        AnswerControls(
+            state.phase, state.phase == AnswerPhase.Question, "▶ Подвести к переходу", "▶ Ещё раз",
+            vm::stop, vm::finishAnswer, vm::playQuestion,
+        ) {
             TextButton(onClick = vm::playExample, enabled = !state.playing) { Text("💡 Как сделал бы я") }
             TextButton(onClick = vm::regenerate) { Text("✨ Другой вариант") }
         }
         if (state.phase == AnswerPhase.Listening) {
             Text("Твоя очередь: переходи! После паузы я разберу.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
         }
-        if (state.answerNotes.isNotEmpty()) {
-            Text(
-                buildAnnotatedString {
-                    state.answerNotes.forEachIndexed { i, n ->
-                        val outside = state.verdict?.outside?.contains(i) ?: false
-                        withStyle(SpanStyle(color = if (outside) MaterialTheme.colorScheme.tertiary else InTuneGreen, fontWeight = FontWeight.SemiBold)) {
-                            append(" ${Pitch(n.step).label(NoteLabels.Solfege)} ")
-                        }
-                    }
-                },
-                style = MaterialTheme.typography.titleLarge,
-            )
-        }
-        state.verdict?.points?.forEach { p ->
-            Text(
-                "${if (p.passed) "✓" else "✗"}  ${p.text}",
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (p.passed) InTuneGreen else MaterialTheme.colorScheme.tertiary,
-            )
-        }
+        AnswerResult(state.answerNotes, state.verdict, { Pitch(it.step).label(NoteLabels.Solfege) })
         if (state.phase == AnswerPhase.Idle) {
             Text("Проверка по нотам нового джинса: «вне макама» здесь — вне ${t.target.lower.name}.", style = MaterialTheme.typography.bodySmall, color = muted)
         }
@@ -309,70 +279,28 @@ private fun QuizPanel(state: TalwinUiState, vm: TalwinViewModel) {
     }
 }
 
-private data class TalwinDot(val course: Int, val cents: Double, val hz: Double, val label: String, val kind: Int)
-
 /**
  * The neck with the maqam and the move over it: the maqam's notes faint, the new jins bold, its
  * changed notes in their own colour, its root ringed; the note sounding or heard is lit.
  */
 @Composable
 private fun TalwinBoard(state: TalwinUiState, modifier: Modifier) {
-    val measurer = rememberTextMeasurer()
-    val maxCents = Fretboard.NECK_CENTS
     val t = state.talwin
-    val a4 = state.a4.toDouble()
-    val dots = remember(t, state.tuning, a4) {
+    val notes = remember(t, state.pitchScale) {
         val home = TaqsimSayrs.Stations(t.from, t.tonic).lower
         val n = t.target.lower.intervals.size
-        val jinsPcs = (0..n).associateBy { Math.floorMod(t.station.step(it), 24) }
+        val jinsPcs = (0..n).map { Math.floorMod(t.station.step(it), 24) }.toSet()
         val changed = t.changes.map { it.to }.toSet()
-        fun place(hz440: Double, label: String, kind: Int) = state.tuning.courses.mapIndexedNotNull { course, open ->
-            val hz = hz440 * state.pitchScale
-            var cents = 1200 * log2(hz / open.frequency(a4))
-            if (abs(cents) < 12) cents = 0.0
-            if (cents < 0 || cents > maxCents) null else TalwinDot(course, cents, hz, label, kind)
-        }
-        // kind: 0 the maqam's note outside the jins, 1 the jins' own note, 2 a changed note, 3 the root.
-        val homeDots = (-10..17).filter { Math.floorMod(home.step(it), 24) !in jinsPcs }.flatMap { place(home.hz(it), home.label(it), 0) }
-        val jinsDots = (-14..21).filter { Math.floorMod(it, 7) <= n }.flatMap { d ->
+        val maqam = (-10..17).filter { Math.floorMod(home.step(it), 24) !in jinsPcs }
+            .map { BoardNote(home.hz(it) * state.pitchScale, home.label(it), DotStyle.Faint) }
+        val jins = (-14..21).filter { Math.floorMod(it, 7) <= n }.map { d ->
             val k = Math.floorMod(d, 7)
-            val kind = when {
-                k == 0 -> 3
-                t.station.spelling(k) in changed -> 2
-                else -> 1
-            }
-            place(t.station.hz(d), t.station.label(d), kind)
-        }
-        homeDots + jinsDots
-    }
-    val heard = state.frequency
-    val colors = boardColors(MaterialTheme.colorScheme.tertiary)
-    val changedColor = MaterialTheme.colorScheme.tertiary
-    fun near(a: Double, b: Double, c: Double) = abs(1200 * log2(a / b)) <= c
-    Canvas(modifier) {
-        val g = BoardGeometry(size, state.tuning.courses.size, true, maxCents, this)
-        drawBoard(g, colors, measurer)
-        dots.forEach { p ->
-            val center = Offset(g.x(p.cents), g.y(p.course))
-            val radius = (if (p.kind == 0) 9.dp else 14.dp).toPx() * g.dotScale
-            val highlight = when {
-                state.playingHz != null && near(p.hz, state.playingHz, 5.0) -> colors.playing
-                heard != null && near(p.hz, heard, 35.0) -> colors.heard
-                else -> null
-            }
-            if (highlight != null) drawCircle(highlight.copy(alpha = 0.3f), radius = radius + 12.dp.toPx() * g.dotScale, center = center)
-            val fill = highlight ?: when (p.kind) {
-                0 -> colors.accidental
-                2 -> changedColor
-                else -> colors.upperJins
-            }
-            drawCircle(fill, radius = radius, center = center)
-            if (p.kind == 3) drawCircle(colors.label, radius = radius + 4.dp.toPx() * g.dotScale, center = center, style = Stroke(3.dp.toPx() * g.dotScale))
-            val label = measurer.measure(
-                p.label,
-                TextStyle(fontSize = (if (p.kind == 0) 9.sp else 11.sp) * g.dotScale, fontWeight = FontWeight.SemiBold, color = highlight ?: colors.label),
+            BoardNote(
+                t.station.hz(d) * state.pitchScale, t.station.label(d),
+                if (t.station.spelling(k) in changed) DotStyle.Colour else DotStyle.Jins, ring = k == 0, degree = d,
             )
-            drawText(label, topLeft = Offset(center.x - label.size.width / 2f, center.y + radius + 3.dp.toPx() * g.dotScale))
         }
+        maqam + jins
     }
+    ScaleBoard(notes, state.tuning, state.a4.toDouble(), litHz = state.playingHz, heardHz = state.frequency, heardInTune = false, modifier = modifier)
 }
