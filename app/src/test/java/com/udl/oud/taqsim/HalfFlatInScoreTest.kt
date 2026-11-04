@@ -13,8 +13,9 @@ class HalfFlatInScoreTest {
             (0L until 10L).forEach { s ->
                 val t = TaqsimGenerator(s).generate(m, TaqsimLength.Medium)
                 val items = ScoreLayout.layout(t, emptyMap(), 160f).flatMap { it.items }
-                t.notes.forEachIndexed { i, n ->
-                    val expected = when (n.spelling.alter) {
+                val alters = t.phrases.flatMap { p -> p.notes.map { p.station.spelling(it.degree).alter } }
+                t.notes.forEachIndexed { i, _ ->
+                    val expected = when (alters[i]) {
                         -2 -> Accidental.Flat
                         -1 -> Accidental.HalfFlat
                         1 -> Accidental.HalfSharp

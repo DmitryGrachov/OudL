@@ -26,7 +26,7 @@ object JinsEtude {
         val base = JinsCatalog.station(jins, root)
         return Station(
             "${jins.name} на ${base.spelling(0).label(NoteLabels.Solfege)}",
-            base.maqam, root, false, jins, 0, 0, -2, top + 1,
+            JinsCatalog.host(jins), root, false, jins, 0, 0, -2, top + 1,
         )
     }
 

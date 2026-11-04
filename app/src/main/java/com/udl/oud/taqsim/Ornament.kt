@@ -1,7 +1,5 @@
 package com.udl.oud.taqsim
 
-import com.udl.oud.fretboard.NoteLabels
-import com.udl.oud.fretboard.Spelling
 import kotlin.random.Random
 
 /** The ornaments an oud player puts on the skeleton of a phrase. */
@@ -21,13 +19,17 @@ enum class OrnamentKind(val sign: String, val title: String) {
  */
 data class Ornament(
     val kind: OrnamentKind,
-    val neighbourStep: Int?,
-    val neighbourSpelling: Spelling?,
+    /** The neighbour's frequency at A4 = 440, and its name. */
+    val neighbourHz: Double?,
+    val neighbourName: String?,
     /** For a turn, the degree below as well. */
-    val lowerStep: Int? = null,
+    val lowerHz: Double? = null,
+    /** Degree of the neighbour in the station, for checking it stays in the maqam. */
+    val neighbourDegree: Int? = null,
+    val lowerDegree: Int? = null,
 ) {
     fun describe(on: String): String {
-        val via = neighbourSpelling?.let { " (${it.label(NoteLabels.Solfege)})" } ?: ""
+        val via = neighbourName?.let { " ($it)" } ?: ""
         return "${kind.title}$via на $on"
     }
 }
@@ -89,8 +91,10 @@ object Ornamenter {
                     else -> n.degree + 1
                 }
                 result[offset + i] = Ornament(
-                    kind, neighbour?.let(station::step), neighbour?.let(station::spelling),
-                    lowerStep = if (kind == OrnamentKind.Turn) station.step(n.degree - 1) else null,
+                    kind, neighbour?.let(station::hz), neighbour?.let(station::label),
+                    lowerHz = if (kind == OrnamentKind.Turn) station.hz(n.degree - 1) else null,
+                    neighbourDegree = neighbour,
+                    lowerDegree = if (kind == OrnamentKind.Turn) n.degree - 1 else null,
                 )
             }
             offset += notes.size
@@ -110,7 +114,8 @@ object Ornamenter {
 
 /** One sound of a performed note: a pluck, or a note slurred in by the left hand without one. */
 data class SoundEvent(
-    val step: Int,
+    /** Frequency at A4 = 440. */
+    val hz: Double,
     val startMs: Double,
     val lengthMs: Double,
     val gain: Float = 1f,
@@ -132,17 +137,17 @@ object OrnamentSound {
     private const val GRACE_MS = 85.0
     private const val SLIDE_MS = 120.0
 
-    fun events(step: Int, ornament: Ornament?, startMs: Double, lengthMs: Double): List<SoundEvent> {
-        val plain = listOf(SoundEvent(step, startMs, lengthMs))
+    fun events(hz: Double, ornament: Ornament?, startMs: Double, lengthMs: Double): List<SoundEvent> {
+        val plain = listOf(SoundEvent(hz, startMs, lengthMs))
         if (ornament == null) return plain
-        val n = ornament.neighbourStep
+        val n = ornament.neighbourHz
         fun at(offset: Double) = startMs + offset
         return when (ornament.kind) {
             OrnamentKind.Tremolo -> {
                 if (lengthMs < 6 * TREMOLO_MS) return plain
                 val count = (lengthMs * 0.85 / TREMOLO_MS).toInt()
                 val strokes = (0 until count).map { k ->
-                    SoundEvent(step, at(k * TREMOLO_MS), TREMOLO_MS, gain = if (k == 0) 1f else if (k % 2 == 1) 0.6f else 0.72f)
+                    SoundEvent(hz, at(k * TREMOLO_MS), TREMOLO_MS, gain = if (k == 0) 1f else if (k % 2 == 1) 0.6f else 0.72f)
                 }
                 // The last stroke rings on to the end of the note.
                 strokes.dropLast(1) + strokes.last().copy(lengthMs = lengthMs - (count - 1) * TREMOLO_MS)
@@ -150,43 +155,43 @@ object OrnamentSound {
             OrnamentKind.Trill -> {
                 if (n == null || lengthMs < 8 * QUICK_MS) return plain
                 val shakes = ((lengthMs * 0.6) / QUICK_MS).toInt().let { if (it % 2 == 1) it + 1 else it }
-                val head = SoundEvent(step, at(0.0), QUICK_MS * 1.5)
+                val head = SoundEvent(hz, at(0.0), QUICK_MS * 1.5)
                 val alternation = (0 until shakes).map { k ->
-                    SoundEvent(if (k % 2 == 0) n else step, at(QUICK_MS * 1.5 + k * QUICK_MS), QUICK_MS, gain = 0.45f, legato = true)
+                    SoundEvent(if (k % 2 == 0) n else hz, at(QUICK_MS * 1.5 + k * QUICK_MS), QUICK_MS, gain = 0.45f, legato = true)
                 }
                 val rest = QUICK_MS * 1.5 + shakes * QUICK_MS
-                listOf(head) + alternation + SoundEvent(step, at(rest), lengthMs - rest, gain = 0.45f, legato = true)
+                listOf(head) + alternation + SoundEvent(hz, at(rest), lengthMs - rest, gain = 0.45f, legato = true)
             }
             OrnamentKind.Mordent -> {
                 if (n == null || lengthMs < 4 * QUICK_MS) return plain
                 listOf(
-                    SoundEvent(step, at(0.0), QUICK_MS),
+                    SoundEvent(hz, at(0.0), QUICK_MS),
                     SoundEvent(n, at(QUICK_MS), QUICK_MS, gain = 0.5f, legato = true),
-                    SoundEvent(step, at(2 * QUICK_MS), lengthMs - 2 * QUICK_MS, gain = 0.5f, legato = true),
+                    SoundEvent(hz, at(2 * QUICK_MS), lengthMs - 2 * QUICK_MS, gain = 0.5f, legato = true),
                 )
             }
             OrnamentKind.GraceAbove, OrnamentKind.GraceBelow -> {
                 if (n == null || lengthMs < 3 * GRACE_MS) return plain
                 listOf(
                     SoundEvent(n, at(0.0), GRACE_MS),
-                    SoundEvent(step, at(GRACE_MS), lengthMs - GRACE_MS, gain = 0.55f, legato = true),
+                    SoundEvent(hz, at(GRACE_MS), lengthMs - GRACE_MS, gain = 0.55f, legato = true),
                 )
             }
             OrnamentKind.Turn -> {
                 if (n == null || lengthMs < 5 * QUICK_MS) return plain
-                val below = ornament.lowerStep ?: return plain
+                val below = ornament.lowerHz ?: return plain
                 listOf(
                     SoundEvent(n, at(0.0), QUICK_MS),
-                    SoundEvent(step, at(QUICK_MS), QUICK_MS, gain = 0.5f, legato = true),
+                    SoundEvent(hz, at(QUICK_MS), QUICK_MS, gain = 0.5f, legato = true),
                     SoundEvent(below, at(2 * QUICK_MS), QUICK_MS, gain = 0.5f, legato = true),
-                    SoundEvent(step, at(3 * QUICK_MS), lengthMs - 3 * QUICK_MS, gain = 0.5f, legato = true),
+                    SoundEvent(hz, at(3 * QUICK_MS), lengthMs - 3 * QUICK_MS, gain = 0.5f, legato = true),
                 )
             }
             OrnamentKind.Slide -> {
                 if (n == null || lengthMs < 2.5 * SLIDE_MS) return plain
-                // From the degree below, in cents: a quarter-tone grid step is 50 cents.
-                val cents = ((step - n) * 50.0).coerceIn(50.0, 200.0)
-                listOf(SoundEvent(step, at(0.0), lengthMs, slideFromCents = cents, slideMs = SLIDE_MS))
+                // From the degree below, in cents.
+                val cents = (1200 * kotlin.math.log2(hz / n)).coerceIn(50.0, 200.0)
+                listOf(SoundEvent(hz, at(0.0), lengthMs, slideFromCents = cents, slideMs = SLIDE_MS))
             }
         }
     }

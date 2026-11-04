@@ -1,5 +1,6 @@
 package com.udl.oud.taqsim
 
+import com.udl.oud.fretboard.Jins
 import com.udl.oud.fretboard.Maqam
 import com.udl.oud.fretboard.NoteLabels
 import kotlin.math.abs
@@ -19,8 +20,15 @@ class TaqsimGenerator(private val seed: Long) {
         generateFrom(maqam, TaqsimSayrs.plan(maqam, length, random, tonic), TaqsimSayrs.isDetailed(maqam))
 
     /** The phrases for a ready [plan]: a whole sayr, or a short etude inside one jins. */
-    fun generateFrom(maqam: Maqam, plan: TaqsimSayrs.Plan, detailed: Boolean): Taqsim {
-        val theme = makeTheme(maqam)
+    fun generateFrom(maqam: Maqam, plan: TaqsimSayrs.Plan, detailed: Boolean): Taqsim =
+        generateFrom(plan, maqam.lower, maqam.name, maqam, detailed)
+
+    /**
+     * The phrases for a ready [plan], in any pitch system: the theme comes from [themeJins] (the
+     * lower jins), [title] names what it is in, [maqam] is the Arabic maqam if there is one.
+     */
+    fun generateFrom(plan: TaqsimSayrs.Plan, themeJins: Jins, title: String, maqam: Maqam?, detailed: Boolean): Taqsim {
+        val theme = makeTheme(themeJins)
         val phrases = mutableListOf<TaqsimPhrase>()
         var lastStep = plan.sections.first().station.step(plan.sections.first().station.focus)
         var question: List<Int>? = null
@@ -58,7 +66,7 @@ class TaqsimGenerator(private val seed: Long) {
 
                 val velocity = Expression.velocities(draft.degrees, beats, section.kind, station, random)
                 val notes = draft.degrees.mapIndexed { n, d ->
-                    TaqsimNote(station.step(d), station.spelling(d), d, beats[n], velocity[n], pauses[n] ?: 0.0)
+                    TaqsimNote(station.step(d), station.label(d), station.staff(d), station.hz(d), d, beats[n], velocity[n], pauses[n] ?: 0.0)
                 }
                 phrases += TaqsimPhrase(
                     section.kind, role, station, notesHow.joinToString("; "), notes, rest, draft.theme.toSet(), figure,
@@ -87,7 +95,7 @@ class TaqsimGenerator(private val seed: Long) {
                 p
             }
         }
-        return Taqsim(maqam, seed, shaped, detailed, plan.form, theme)
+        return Taqsim(maqam, seed, shaped, detailed, plan.form, theme, title)
     }
 
     /** The cell as the next phrase takes it up: a step lower or higher, inverted, or answered by itself. */
@@ -114,8 +122,8 @@ class TaqsimGenerator(private val seed: Long) {
      * with a rhythm of its own that makes it recognisable when it comes back: a held first
      * note, a figure of short notes or a dotted pair, a longer last note.
      */
-    private fun makeTheme(maqam: Maqam): Theme {
-        val grammar = JinsGrammars.of(maqam.lower)
+    private fun makeTheme(jins: Jins): Theme {
+        val grammar = JinsGrammars.of(jins)
         val pool = grammar.motifs.filter { MotifUse.Open in it.uses || MotifUse.Develop in it.uses }.ifEmpty { grammar.motifs }
         val motif = pool.random(random)
         var shape = motif.degrees
@@ -340,7 +348,7 @@ class TaqsimGenerator(private val seed: Long) {
         val flags = mutableListOf(false)
         approach(notes, flags, end, 0.5)
         if (notes.size < 3) notes.add(0, (from + 1).coerceAtMost(station.high))
-        return Draft(notes, "простой ход к ${station.spelling(end).label(NoteLabels.Solfege)}")
+        return Draft(notes, "простой ход к ${station.label(end)}")
     }
 
     private companion object {

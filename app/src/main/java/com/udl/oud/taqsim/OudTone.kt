@@ -17,6 +17,10 @@ object OudTone {
     fun course(step: Int, tuning: Tuning): Int =
         tuning.courses.indices.lastOrNull { tuning.courses[it].midi * 2 <= step } ?: 0
 
+    /** Course a note of frequency [hz] (as it sounds) is played on, against [a4]. */
+    fun course(hz: Double, tuning: Tuning, a4: Double): Int =
+        tuning.courses.indices.lastOrNull { tuning.courses[it].frequency(a4) <= hz * 1.003 } ?: 0
+
     /** 0 dark … 1 bright: bass courses darker. */
     fun brightness(course: Int, tuning: Tuning): Float = 0.25f + 0.6f * course / (tuning.courses.size - 1).coerceAtLeast(1)
 

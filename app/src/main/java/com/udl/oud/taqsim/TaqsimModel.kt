@@ -2,41 +2,102 @@ package com.udl.oud.taqsim
 
 import com.udl.oud.fretboard.Jins
 import com.udl.oud.fretboard.Maqam
+import com.udl.oud.fretboard.NoteLabels
+import com.udl.oud.fretboard.Pitch
 import com.udl.oud.fretboard.ScaleNote
 import com.udl.oud.fretboard.Spelling
+import com.udl.oud.fretboard.StaffNote
 import kotlin.math.abs
 
 /**
+ * How the degrees of a station sound and are written: an Arabic maqam on the quarter-tone grid,
+ * or a Turkish makam on the 53-koma grid. Everything the taqsim does with degrees — motifs,
+ * rules, rhythm, ornaments — works the same over either.
+ */
+interface StationScale {
+    /** Pitch units in an octave: 24 quarter tones, or 53 komas. */
+    val perOctave: Int
+
+    /** Pitch of [degree] in units: a grid step (2 × MIDI), or a written pitch in komas. */
+    fun step(degree: Int): Int
+
+    /** The note's name as the tab shows it. */
+    fun label(degree: Int): String
+
+    /** The note as it is written on a staff. */
+    fun staff(degree: Int): StaffNote
+
+    /** Frequency at A4 = 440 Hz (a Turkish oud in Bolâhenk). */
+    fun hz(degree: Int): Double
+}
+
+/** An Arabic maqam on [tonic] in its ascending or descending form. */
+data class ArabicScale(val maqam: Maqam, val tonic: Int, val descending: Boolean) : StationScale {
+    private val notes: List<ScaleNote> = maqam.notes(tonic, descending)
+    override val perOctave: Int get() = 24
+    override fun step(degree: Int): Int = tonic + notes[Math.floorMod(degree, 7)].offset + 24 * Math.floorDiv(degree, 7)
+    fun spelling(degree: Int): Spelling = notes[Math.floorMod(degree, 7)].spelling
+    override fun label(degree: Int): String = spelling(degree).label(NoteLabels.Solfege)
+    override fun staff(degree: Int): StaffNote = StaffNote.arabic(step(degree), spelling(degree))
+    override fun hz(degree: Int): Double = Pitch(step(degree)).frequency(440.0)
+}
+
+/**
  * A station of the sayr: where the taqsim dwells for a while. Notes are counted in degrees of
- * the station's own scale ([maqam] on [tonic], in its ascending or descending form): 0 is that
- * tonic, 7 its octave, −1 the degree under it. The [jins] sitting on degree [jinsRoot] gives the
- * motifs; phrases rest on [focus] and stay within [low]..[high].
+ * the station's [scale]: 0 is its tonic, 7 its octave, −1 the degree under it. The [jins]
+ * sitting on degree [jinsRoot] gives the motifs (for a Turkish station, the Arabic jins of the
+ * same shape, named [jinsTitle]); phrases rest on [focus] and stay within [low]..[high].
  */
 data class Station(
     val name: String,
-    val maqam: Maqam,
-    val tonic: Int,
-    val descending: Boolean,
+    val scale: StationScale,
     val jins: Jins,
     val jinsRoot: Int,
     val focus: Int,
     val low: Int,
     val high: Int,
+    val jinsTitle: String = jins.name,
 ) {
+    /** An Arabic station: [maqam] on [tonic]. */
+    constructor(
+        name: String,
+        maqam: Maqam,
+        tonic: Int,
+        descending: Boolean,
+        jins: Jins,
+        jinsRoot: Int,
+        focus: Int,
+        low: Int,
+        high: Int,
+    ) : this(name, ArabicScale(maqam, tonic, descending), jins, jinsRoot, focus, low, high)
+
     init {
         require(low <= focus && focus <= high) { "$name: focus outside the range" }
         require(jinsRoot in low - 1..high) { "$name: jins outside the range" }
     }
 
-    private val notes: List<ScaleNote> = maqam.notes(tonic, descending)
+    /** The Arabic maqam of the station, or null for a Turkish one. */
+    val maqam: Maqam? get() = (scale as? ArabicScale)?.maqam
 
-    /** Grid step (2 × MIDI) of [degree]. */
-    fun step(degree: Int): Int = tonic + notes[Math.floorMod(degree, 7)].offset + 24 * Math.floorDiv(degree, 7)
+    val tonic: Int get() = step(0)
 
-    fun spelling(degree: Int): Spelling = notes[Math.floorMod(degree, 7)].spelling
+    fun step(degree: Int): Int = scale.step(degree)
+    fun label(degree: Int): String = scale.label(degree)
+    fun staff(degree: Int): StaffNote = scale.staff(degree)
+    fun hz(degree: Int): Double = scale.hz(degree)
 
-    /** The degree whose pitch is nearest to grid step [step]: how a phrase carries on after a change of station. */
+    /** Arabic spelling of [degree]; only for Arabic stations. */
+    fun spelling(degree: Int): Spelling = (scale as ArabicScale).spelling(degree)
+
+    /** The degree whose pitch is nearest to [step]: how a phrase carries on after a change of station. */
     fun degreeNear(step: Int): Int = (low - 7..high + 7).minBy { abs(step(it) - step) }
+
+    /** The degree nearest to a heard frequency (at A4 = 440), in any octave, and how far off in cents. */
+    fun degreeOfHz(hz: Double): Pair<Int, Double> = (0 until 7).map { d ->
+        val cents = 1200 * kotlin.math.log2(hz / hz(d))
+        val octaves = kotlin.math.round(cents / 1200)
+        d to cents - 1200 * octaves
+    }.minBy { abs(it.second) }
 
     /** Degrees of the jins itself, counted in the station's scale. */
     val jinsDegrees: IntRange get() = jinsRoot..jinsRoot + jins.intervals.size
@@ -79,10 +140,16 @@ data class Section(
     }
 }
 
-/** A note of the taqsim: [beats] long, in units of the base pulse; [degree] in its station's scale. */
+/**
+ * A note of the taqsim: [beats] long, in units of the base pulse; [degree] in its station's
+ * scale, [step] its pitch in the scale's units, [name] and [staff] how it is shown and written,
+ * [hz] its frequency at A4 = 440.
+ */
 data class TaqsimNote(
     val step: Int,
-    val spelling: Spelling,
+    val name: String,
+    val staff: StaffNote,
+    val hz: Double,
     val degree: Int,
     val beats: Double,
     /** How strongly it is played, 0..1. */
@@ -141,12 +208,15 @@ data class Theme(val name: String, val shape: List<Int>, val rhythm: List<Double
 
 /** A whole taqsim: phrases in order, the form of its course, and the theme carried through it. */
 data class Taqsim(
-    val maqam: Maqam,
+    /** The Arabic maqam, or null for a Turkish makam or an etude. */
+    val maqam: Maqam?,
     val seed: Long,
     val phrases: List<TaqsimPhrase>,
     val detailed: Boolean,
     val form: TaqsimForm = TaqsimForm.Classic,
     val theme: Theme? = null,
+    /** What it is played in, for titles: "Раст", "Uşşak". */
+    val title: String = maqam?.name.orEmpty(),
 ) {
     /** Phrases where the theme is heard. */
     val themePhrases: List<Int> get() = phrases.indices.filter { phrases[it].themeNotes.isNotEmpty() }

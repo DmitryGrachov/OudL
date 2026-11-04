@@ -122,7 +122,7 @@ fun TaqsimRoute(vm: TaqsimViewModel = viewModel()) {
     }
 }
 
-private fun noteName(n: TaqsimNote) = n.spelling.label(NoteLabels.Solfege)
+private fun noteName(n: TaqsimNote) = n.name
 
 @Composable
 private fun TaqsimHeardBar(state: TaqsimUiState, vm: TaqsimViewModel, micGranted: Boolean) {
@@ -296,7 +296,7 @@ private fun PhraseDetail(state: TaqsimUiState, vm: TaqsimViewModel) {
                             append(" ")
                             // A grace note is written small before its note, the other signs after it.
                             if (o?.kind == OrnamentKind.GraceAbove || o?.kind == OrnamentKind.GraceBelow) {
-                                append("(${o.neighbourSpelling?.label(NoteLabels.Solfege)})")
+                                append("(${o.neighbourName})")
                             }
                             append(noteName(n))
                             if (o != null && o.kind != OrnamentKind.GraceAbove && o.kind != OrnamentKind.GraceBelow) append(o.kind.sign)
@@ -401,7 +401,7 @@ private fun TaqsimBoard(state: TaqsimUiState, modifier: Modifier) {
 private fun TaqsimStaff(state: TaqsimUiState, modifier: Modifier) {
     val tone = state.playingTone ?: state.target
     val heard = state.heard?.takeIf { tone == null && abs(it.second) <= 40 }
-    val note = tone?.let { StaffNote.arabic(it.step, it.spelling) } ?: heard?.let { StaffNote.arabic(it.first.step) }
+    val note = tone?.let { it.staff } ?: heard?.let { StaffNote.arabic(it.first.step) }
     val name = tone?.let(::noteName) ?: heard?.first?.label(NoteLabels.Solfege)
     val color: Color = when {
         tone != null -> MaterialTheme.colorScheme.primary

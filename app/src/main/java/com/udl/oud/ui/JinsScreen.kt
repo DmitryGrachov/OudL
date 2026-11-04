@@ -422,7 +422,7 @@ private fun EtudePanel(state: JinsUiState, vm: JinsViewModel) {
                                 k in p.themeNotes -> SpanStyle(color = MaterialTheme.colorScheme.primary)
                                 else -> SpanStyle(color = muted)
                             }
-                            withStyle(style) { append(" ${n.spelling.label(NoteLabels.Solfege)} ") }
+                            withStyle(style) { append(" ${n.name} ") }
                         }
                     },
                     Modifier.weight(1f),
@@ -443,8 +443,8 @@ private fun JinsAnswerPanel(state: JinsUiState, vm: JinsViewModel) {
     Column(Modifier.fillMaxWidth().padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("Ответь в джинсе", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Text(
-            "Вопрос останавливается на ${question.notes.last().spelling.label(NoteLabels.Solfege)}. " +
-                "Ответь своей фразой из нот джинса и приди на ${answer.notes.last().spelling.label(NoteLabels.Solfege)}; " +
+            "Вопрос останавливается на ${question.notes.last().name}. " +
+                "Ответь своей фразой из нот джинса и приди на ${answer.notes.last().name}; " +
                 "не забудь цветную ступень ${state.colour.joinToString { state.name(it) }}.",
             style = MaterialTheme.typography.bodyMedium,
             color = muted,

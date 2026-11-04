@@ -1,7 +1,6 @@
 package com.udl.oud.taqsim
 
 import com.udl.oud.audio.PluckSynth
-import com.udl.oud.fretboard.Pitch
 import com.udl.oud.tuner.Tuning
 
 /** A rendered stretch of a taqsim: the sound, and when each of its notes starts (ms from the start). */
@@ -24,6 +23,8 @@ object TaqsimRenderer {
         tuning: Tuning,
         ornaments: Map<Int, Ornament>,
         sampleRate: Int,
+        /** Frequency factor against A4 = 440: the A4 chosen and, on a Turkish oud, its ahenk. */
+        pitchScale: Double = a4 / 440.0,
     ): RenderedTaqsim {
         val first = taqsim.phrases.take(phrases.first).sumOf { it.notes.size }
         val notes = phrases.flatMap { taqsim.phrases[it].notes }
@@ -44,12 +45,12 @@ object TaqsimRenderer {
         val totalMs = t + TAIL_MS
         fun samples(ms: Double) = (ms * sampleRate / 1000).toInt()
         val plucks = notes.flatMapIndexed { i, n ->
-            val course = OudTone.course(n.step, tuning)
-            OrnamentSound.events(n.step, ornaments[first + i], starts[i], lengths[i]).map { e ->
+            val course = OudTone.course(n.hz * pitchScale, tuning, a4)
+            OrnamentSound.events(n.hz, ornaments[first + i], starts[i], lengths[i]).map { e ->
                 // The left hand's vibrato on a held note, coming in after it has sounded a while.
                 val vibrato = e.lengthMs >= OudTone.VIBRATO_FROM_MS
                 PluckSynth.Pluck(
-                    Pitch(e.step).frequency(a4), samples(e.startMs), samples(e.lengthMs), e.gain * n.velocity, e.legato,
+                    e.hz * pitchScale, samples(e.startMs), samples(e.lengthMs), e.gain * n.velocity, e.legato,
                     e.slideFromCents, samples(e.slideMs),
                     brightness = OudTone.brightness(course, tuning),
                     ringSeconds = OudTone.ring(course, tuning),

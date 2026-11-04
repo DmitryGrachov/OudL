@@ -48,7 +48,7 @@ class OrnamentTest {
                     val classes = (0 until 7).map { Math.floorMod(p.station.step(it), 24) }.toSet()
                     p.notes.indices.forEach { i ->
                         o[offset + i]?.let { orn ->
-                            listOfNotNull(orn.neighbourStep, orn.lowerStep).forEach { step ->
+                            listOfNotNull(orn.neighbourDegree, orn.lowerDegree).map { p.station.step(it) }.forEach { step ->
                                 assertTrue("${m.name} $s: ${orn.kind}", Math.floorMod(step, 24) in classes)
                             }
                         }
@@ -64,8 +64,8 @@ class OrnamentTest {
 
     @Test fun eventsFillTheNoteAndNoMore() {
         OrnamentKind.entries.forEach { kind ->
-            val o = Ornament(kind, 104, null, lowerStep = 96)
-            val events = OrnamentSound.events(100, o, 1000.0, 1200.0)
+            val o = Ornament(kind, 160.0, null, lowerHz = 130.0)
+            val events = OrnamentSound.events(146.8, o, 1000.0, 1200.0)
             assertTrue(kind.name, events.first().startMs == 1000.0)
             val end = events.maxOf { it.startMs + it.lengthMs }
             assertEquals(kind.name, 2200.0, end, 0.5)
@@ -74,16 +74,16 @@ class OrnamentTest {
     }
 
     @Test fun tremoloIsQuickRepeatedPlucksAndTrillAlternates() {
-        val tremolo = OrnamentSound.events(100, Ornament(OrnamentKind.Tremolo, null, null), 0.0, 1500.0)
+        val tremolo = OrnamentSound.events(146.8, Ornament(OrnamentKind.Tremolo, null, null), 0.0, 1500.0)
         assertTrue(tremolo.size >= 12)
-        assertTrue(tremolo.all { it.step == 100 && !it.legato })
-        val trill = OrnamentSound.events(100, Ornament(OrnamentKind.Trill, 103, null), 0.0, 1500.0)
+        assertTrue(tremolo.all { it.hz == 146.8 && !it.legato })
+        val trill = OrnamentSound.events(146.8, Ornament(OrnamentKind.Trill, 160.0, null), 0.0, 1500.0)
         assertTrue(trill.drop(1).all { it.legato })
-        assertTrue(trill.map { it.step }.zipWithNext().count { (a, b) -> a != b } >= 6)
+        assertTrue(trill.map { it.hz }.zipWithNext().count { (a, b) -> a != b } >= 6)
     }
 
     @Test fun shortNotesStayPlain() {
-        val e = OrnamentSound.events(100, Ornament(OrnamentKind.Trill, 103, null), 0.0, 200.0)
+        val e = OrnamentSound.events(146.8, Ornament(OrnamentKind.Trill, 160.0, null), 0.0, 200.0)
         assertEquals(1, e.size)
     }
 

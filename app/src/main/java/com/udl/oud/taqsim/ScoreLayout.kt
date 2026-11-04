@@ -68,7 +68,7 @@ object ScoreLayout {
         var index = 0
         val lastNote = taqsim.notes.lastIndex
         taqsim.phrases.forEachIndexed { pi, phrase ->
-            val staffs = phrase.notes.map { StaffNote.arabic(it.step, it.spelling) }
+            val staffs = phrase.notes.map { it.staff }
             val widths = phrase.notes.indices.map { width(phrase.notes[it], staffs[it]) }
             val total = widths.sum() + GAP
             // Start the phrase on a new line if it would fit there but not in what is left here.
