@@ -11,6 +11,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlin.math.max
 import kotlin.math.sqrt
@@ -21,8 +22,15 @@ import kotlin.math.sqrt
  * not depend on how late the buffer reaches us.
  */
 class MicOnsetSource(private val sampleRate: Int = 44100, private val hopSize: Int = 256) {
+    /** A stroke heard: when (in [System.nanoTime]) and how loud its attack was (peak RMS, 0..1). */
+    data class Onset(val ns: Long, val level: Double)
+
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
-    fun onsets(): Flow<Long> = flow {
+    fun onsets(): Flow<Long> = strokes().map { it.ns }
+
+    /** Onsets with their loudness: the peak of the first frames after each, so the attack is caught whole. */
+    @RequiresPermission(Manifest.permission.RECORD_AUDIO)
+    fun strokes(): Flow<Onset> = flow {
         val minBuffer = AudioRecord.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val record = AudioRecord(
             MediaRecorder.AudioSource.VOICE_RECOGNITION,
@@ -35,6 +43,9 @@ class MicOnsetSource(private val sampleRate: Int = 44100, private val hopSize: I
         var frames = 0L
         // Without the recorder's clock, fall back to when the buffer arrived.
         val startedNs = System.nanoTime()
+        var pendingNs = 0L
+        var pendingPeak = 0.0
+        var pendingFrames = 0
         record.startRecording()
         try {
             while (currentCoroutineContext().isActive) {
@@ -48,13 +59,19 @@ class MicOnsetSource(private val sampleRate: Int = 44100, private val hopSize: I
                 var sum = 0.0
                 for (s in hop) sum += (s / 32768.0) * (s / 32768.0)
                 val rms = sqrt(sum / hopSize)
+                if (pendingFrames > 0) {
+                    pendingPeak = maxOf(pendingPeak, rms)
+                    if (--pendingFrames == 0) emit(Onset(pendingNs, pendingPeak))
+                }
                 if (detector.feed(rms)) {
-                    val ns = if (record.getTimestamp(stamp, AudioTimestamp.TIMEBASE_MONOTONIC) == AudioRecord.SUCCESS) {
+                    if (pendingFrames > 0) emit(Onset(pendingNs, pendingPeak))
+                    pendingNs = if (record.getTimestamp(stamp, AudioTimestamp.TIMEBASE_MONOTONIC) == AudioRecord.SUCCESS) {
                         stamp.nanoTime + (frames - stamp.framePosition) * 1_000_000_000L / sampleRate
                     } else {
                         startedNs + frames * 1_000_000_000L / sampleRate
                     }
-                    emit(ns)
+                    pendingPeak = rms
+                    pendingFrames = PEAK_FRAMES
                 }
                 frames += hopSize
             }
@@ -63,6 +80,11 @@ class MicOnsetSource(private val sampleRate: Int = 44100, private val hopSize: I
             record.release()
         }
     }.flowOn(Dispatchers.IO)
+
+    private companion object {
+        /** Frames after an onset over which its loudness is taken (about 17 ms). */
+        const val PEAK_FRAMES = 3
+    }
 }
 
 /**

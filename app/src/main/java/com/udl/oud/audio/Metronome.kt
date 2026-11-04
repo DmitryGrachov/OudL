@@ -38,6 +38,24 @@ object Metronome {
         return mix.toPcm()
     }
 
+    /**
+     * [bars] bars in one loop, the clicks only in the bars [clicksIn] lets through: to play on
+     * one's own between reminders (and not be heard by the microphone).
+     */
+    fun renderBars(
+        bpm: Int,
+        beats: Int,
+        subdivision: Int,
+        bars: Int,
+        clicksIn: (Int) -> Boolean,
+        sampleRate: Int = LoopTrack.SAMPLE_RATE,
+    ): ShortArray {
+        val bar = render(bpm, beats, subdivision, accent = true, sampleRate)
+        val out = ShortArray(bar.size * bars)
+        for (b in 0 until bars) if (clicksIn(b)) bar.copyInto(out, b * bar.size)
+        return out
+    }
+
     /** A short woodblock-like click: a quickly decaying tone. */
     private fun click(frequency: Double, level: Double, sampleRate: Int): FloatArray =
         FloatArray((0.05 * sampleRate).toInt()) { i ->

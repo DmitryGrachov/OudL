@@ -27,6 +27,7 @@ private enum class Destination(val title: String, val glyph: String) {
     Scales("Гаммы", "♯"),
     Ear("Слух", "◐"),
     Rhythm("Ритм", "◆"),
+    Risha("Риша", "≈"),
     Practice("Практика", "◉"), // drone and rhythm; the full name doesn't fit the rail
     Metronome("Метроном", "♩"),
 }
@@ -44,6 +45,7 @@ fun OudApp() {
             Destination.Scales -> WesternScaleRoute()
             Destination.Ear -> EarRoute()
             Destination.Rhythm -> RhythmRoute()
+            Destination.Risha -> RishaRoute()
             Destination.Practice -> PracticeRoute()
             Destination.Metronome -> MetronomeRoute()
         }
